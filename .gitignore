@@ -1,0 +1,5 @@
+*.o*
+*.e*
+apriori
+*.txt
+tags
