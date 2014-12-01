@@ -58,6 +58,15 @@ __global__ void histogram_kernel(unsigned int* input, unsigned int* bins,
     }
 }
 
+__global__ void pruneGPU_kernel(unsigned int* input, int num_elements, int min_sup) {
+    int tx = threadIdx.x;
+    int index = tx + blockDim.x * blockIdx.x;
+    if (index < num_elements) {
+        if (input[index] < min_sup) {
+            input[index] = 0;    
+        } 
+    }
+}
 #if 0
     //make_flist(d_trans_offsets, d_transactions, d_flist, num_transactions, num_items_in_transactions);
 void make_flist(unsigned int *d_trans_offset, unsigned int *d_transactions, unsigned int *d_flist,

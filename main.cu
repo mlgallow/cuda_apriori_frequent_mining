@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
 
     lines = 0;
     element_id = 0;
-    ifstream fp1("topic-3.txt");
+    ifstream fp1("topic-4.txt");
     string curline, space(" ");
     if (fp1.is_open()) {
         cout<<"file opened"<<endl;
@@ -114,9 +114,9 @@ int main(int argc, char* argv[])
     cuda_ret = cudaMalloc((void**)&ci_d, MAX_UNIQUE_ITEMS * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cuda_ret = cudaMemset(ci_d, 0, MAX_UNIQUE_ITEMS * sizeof(unsigned int));
-    
     cuda_ret = cudaMemcpy(d_input, transactions, num_elements * sizeof(unsigned int), cudaMemcpyHostToDevice);
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
+    
     dim3 grid_dim, block_dim;
     block_dim.x = BLOCK_SIZE; 
     block_dim.y = 1; block_dim.z = 1;
@@ -128,10 +128,25 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch Histogram kernel");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    // prune the histogram op 
+    block_dim.x = BLOCK_SIZE; 
+    block_dim.y = 1; block_dim.z = 1;
+    grid_dim.x = ceil(MAX_UNIQUE_ITEMS / (1.0 * BLOCK_SIZE)); 
+    grid_dim.y = 1; grid_dim.z = 1;
+    cout<<"launching pruning kernel(grid, block):"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    pruneGPU_kernel<<<grid_dim, block_dim>>>(ci_d, MAX_UNIQUE_ITEMS, MIN_SUPPORT);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    
+    cout<<"copying hist op back to host"<<endl;
+    startTime(&timer);
     cudaMemcpy(ci_h, ci_d, MAX_UNIQUE_ITEMS * sizeof(unsigned int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
-    cout<<"histogram output:"<<endl;
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    cout<<"histogram output after pruning:"<<endl;
     for (int i = 0; i < MAX_UNIQUE_ITEMS; i++) {
         cout<<"ci_h["<<i<<"]="<<ci_h[i]<<endl;   
     }     
