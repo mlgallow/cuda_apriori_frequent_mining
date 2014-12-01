@@ -146,12 +146,85 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+#ifdef TEST_PARAMS
     cout<<"histogram output after pruning:"<<endl;
     for (int i = 0; i < MAX_UNIQUE_ITEMS; i++) {
         cout<<"ci_h["<<i<<"]="<<ci_h[i]<<endl;   
     }     
-#ifdef TEST_PARAMS
 #endif
+    unsigned int *li_h; // this list contains the actual items which passed min support test
+    unsigned int  k = 0; //count of actual items which passed min support test
+    for (int i = 0;i<MAX_UNIQUE_ITEMS;i++) {
+        if (ci_h[i] != 0) {
+            k++;    
+        }    
+    }
+    cout<<"num items with good support count="<<k<<endl;
+    li_h = (unsigned int *) malloc(k * sizeof(unsigned int));
+    /*if (li_h ==  NULL) {
+        cout<<"faild to alloc li_h...exiting!"<<endl;
+        goto exit;    
+    }*/
+    int li_count = 0;
+    for (int i = 0;i<MAX_UNIQUE_ITEMS;i++) {
+        if (ci_h[i] != 0) {
+            li_h[li_count++] = ci_h[i]; 
+        } 
+    }
+
+#ifdef TEST_PARAMS
+    cout<<"li_h after pruning:"<<endl;
+    for (int i = 0; i < k; i++) {
+        cout<<"li_h["<<i<<"]="<<li_h[i]<<endl;   
+    }
+#endif
+    unsigned int *li_d;
+    cuda_ret = cudaMalloc((void**)&li_d, k * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cudaMemcpy(li_d, li_h, k * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy li_h to device");
+    /*
+    block_dim.x = BLOCK_SIZE; 
+    block_dim.y = 1; block_dim.z = 1;
+    grid_dim.x = ceil(k / (1.0 * BLOCK_SIZE)); 
+    grid_dim.y = 1; grid_dim.z = 1;
+    cout<<"launching selfJoin Kernel(grid, block):"<<grid_dim.x<<","<<block_dim.x<<endl;
+*/
+    int maskLength = pow(float(k), 2);
+    cout <<"maskLength ="<<maskLength<<endl;
+    int *mask_h = (int*)malloc(maskLength * sizeof(int));
+    int* mask_d;//mask matrix
+    cout<<"alloc mask matrix"<<endl;
+    startTime(&timer);
+    cuda_ret = cudaMalloc((void**)&mask_d, maskLength * sizeof(int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = 1;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil((maskLength) / (1.0 * block_dim.x));
+    grid_dim.y = 1;
+    grid_dim.z = 1;
+    cout<<"init mask"<<endl;
+    startTime(&timer);
+    initializeMaskArray<<<grid_dim, block_dim>>>(mask_d, maskLength);
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    cudaDeviceSynchronize();
+/*
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = 1;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil((maskLength) / (1.0 * MAX_ITEM_PER_SM));
+    grid_dim.y = 1;
+    grid_dim.z = 1;
+    cout<<"self join launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    selfJoinKernel<<<grid_dim, block_dim>>>(li_d, d_mask, actualNumItems);
+    cudaDeviceSynchronize();
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    cudaDeviceSynchronize();*/
 #if 0
 
     unsigned int *d_flist, *d_flist_key_16;
@@ -219,42 +292,6 @@ int main(int argc, char* argv[])
     int*li_d;
     cuda_ret = cudaMalloc((void**)&li_d, actualNumItems * sizeof(int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
-    int maskLength = pow(float(actualNumItems), 2);
-    cout <<"atual item ="<<actualNumItems;
-    cout <<"maskLength ="<<maskLength<<endl;
-    block_dim.x = BLOCK_SIZE;
-    block_dim.y = 1;
-    block_dim.y = 1;
-
-    grid_dim.x = (int) ceil((maskLength) / (1.0 * block_dim.x));
-    grid_dim.y = 1;
-    grid_dim.z = 1;
-    int *mask_h = (int*)malloc(maskLength * sizeof(int));
-    int* d_mask;
-    cout<<"alloc mask"<<endl;
-    startTime(&timer);
-    cuda_ret = cudaMalloc((void**)&d_mask, maskLength * sizeof(int));
-    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
-    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
-    
-    cout<<"init mask"<<endl;
-    startTime(&timer);
-    initializeMaskArray<<<grid_dim, block_dim>>>(d_mask, maskLength);
-    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
-    cudaDeviceSynchronize();
-
-    block_dim.x = BLOCK_SIZE;
-    block_dim.y = 1;
-    block_dim.y = 1;
-    grid_dim.x = (int) ceil((maskLength) / (1.0 * MAX_ITEM_PER_SM));
-    grid_dim.y = 1;
-    grid_dim.z = 1;
-    cout<<"self join launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
-    startTime(&timer);
-    selfJoinKernel<<<grid_dim, block_dim>>>(li_d, d_mask, actualNumItems);
-    cudaDeviceSynchronize();
-    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
-    cudaDeviceSynchronize();
     // Free memory ------------------------------------------------------------
 
     #ifdef TEST_MODE
@@ -282,12 +319,27 @@ int main(int argc, char* argv[])
     //free(flist_key_16);
     free(flist_key_16_index);
 #endif
-    free(trans_offset);
-    free(transactions);
-    free(ci_h);
+exit:
+    if (trans_offset) {
+        free(trans_offset);
+    }
+    if (transactions) {
+        free(transactions);
+    }
+    if (ci_h) {
+        free(ci_h);
+    }
+    if (li_h) {
+        free(li_h);    
+    }
+    if (mask_h) {
+        free(mask_h);    
+    }
     cudaFree(d_offsets);
     cudaFree(d_input);
     cudaFree(ci_d);
+    cudaFree(li_d);
+    cudaFree(mask_d);
     cout<<"program end";
 
 }

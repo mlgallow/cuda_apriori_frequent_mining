@@ -67,6 +67,12 @@ __global__ void pruneGPU_kernel(unsigned int* input, int num_elements, int min_s
         } 
     }
 }
+__global__ void  initializeMaskArray(int *mask_d, int maskLength) {
+    int index = threadIdx.x + blockDim.x * blockIdx.x;
+    if (index < maskLength) {
+        mask_d[index] = -1;
+    }
+}
 #if 0
     //make_flist(d_trans_offsets, d_transactions, d_flist, num_transactions, num_items_in_transactions);
 void make_flist(unsigned int *d_trans_offset, unsigned int *d_transactions, unsigned int *d_flist,
@@ -204,12 +210,6 @@ __global__ void pruneList(unsigned int *input, int num_elements, int min_support
     }
 } 
 
-__global__ void  initializeMaskArray(int *mask_d, int maskLength) {
-    int index = threadIdx.x + blockDim.x * blockIdx.x;
-    if (index < maskLength) {
-        mask_d[index] = -1;
-    }
-}
 
 __global__ void selfJoinKernel(int *input, int *mask, int num_elements) {
     int start = blockIdx.x * MAX_ITEM_PER_SM; 
