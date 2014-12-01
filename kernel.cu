@@ -73,6 +73,76 @@ __global__ void  initializeMaskArray(int *mask_d, int maskLength) {
         mask_d[index] = -1;
     }
 }
+__global__ void selfJoinKernel(unsigned int *input_d, int *output_d, int num_elements, int power) {
+    int tx = threadIdx.x;
+    int start = blockIdx.x * MAX_ITEM_PER_SM; 
+    __shared__ int sm1[MAX_ITEM_PER_SM];   
+    __shared__ int sm2[MAX_ITEM_PER_SM];
+
+    int actual_items_per_sm = num_elements - start;
+    if (actual_items_per_sm >= MAX_ITEM_PER_SM) {
+        actual_items_per_sm = MAX_ITEM_PER_SM;
+    }
+    
+
+    int location_x = 0;   
+    for (int i = 0; i < ceil(MAX_ITEM_PER_SM/ (1.0 * BLOCK_SIZE));i++) {
+        location_x = tx + i * BLOCK_SIZE;
+        if (location_x < actual_items_per_sm && (start + location_x) < num_elements) {
+            sm1[location_x] = input_d[start + location_x];    
+        } else {
+            sm1[location_x] = 0; 
+        }
+    }
+    __syncthreads();
+
+    // self join of 1st block
+    int loop_tx = 0;
+    for (int i = 0; i < ceil(MAX_ITEM_PER_SM/ (1.0 * BLOCK_SIZE));i++) {
+        loop_tx = tx + i * BLOCK_SIZE;
+        if (loop_tx < actual_items_per_sm) {
+            for (int j = loop_tx + 1;j < actual_items_per_sm;j++) {
+                if (sm1[loop_tx] / (int)(pow(10.0, (double)power)) == sm1[j] / (int)(pow(10.0, (double)power))) {
+                //if (sm1[loop_tx] / 10 == sm1[j] / 10) {
+                    output_d[(start + loop_tx) * num_elements + (start + j)] = 0;
+               } 
+            }   
+        }
+    }
+
+    __syncthreads();
+    if ((blockIdx.x + 1) < ceil(num_elements / (1.0 * MAX_ITEM_PER_SM))) {
+        int current_smid = 0;
+        for (int smid = blockIdx.x + 1; smid < ceil(num_elements / (1.0 * MAX_ITEM_PER_SM));smid++) {
+            int actual_items_per_secondary_sm = num_elements - current_smid * MAX_ITEM_PER_SM - start - MAX_ITEM_PER_SM;
+            if (actual_items_per_secondary_sm > MAX_ITEM_PER_SM)
+                actual_items_per_secondary_sm = MAX_ITEM_PER_SM;
+
+            for (int i = 0; i < ceil(MAX_ITEM_PER_SM/ (1.0 * BLOCK_SIZE));i++) {
+                int location_x = tx + i * BLOCK_SIZE;
+                if (location_x < actual_items_per_secondary_sm and (current_smid * MAX_ITEM_PER_SM + start + location_x) < num_elements) {
+                    sm2[location_x] = input_d[(current_smid + 1) * MAX_ITEM_PER_SM + start + location_x];
+                } else {
+                    sm2[location_x] = 0;
+                }
+            }
+            __syncthreads();
+                            
+            for (int i = 0; i < ceil(MAX_ITEM_PER_SM/ (1.0 * BLOCK_SIZE));i++) {
+                if (loop_tx < actual_items_per_sm) {
+                    for (int j = 0;j < actual_items_per_secondary_sm;j++) {
+                        if (sm1[loop_tx] / (int)(pow(10.0, (double)power)) == sm2[j] / (int)(pow(10.0, (double)power))) {
+                        //if (sm1[loop_tx] / 10 == sm2[j] / 10) {
+                            output_d[(start + loop_tx) * num_elements + (current_smid + 1) * MAX_ITEM_PER_SM + start + j] = 0;
+                       } 
+                    }   
+                    
+                }
+            }
+        }
+        current_smid++;    
+    }
+}
 #if 0
     //make_flist(d_trans_offsets, d_transactions, d_flist, num_transactions, num_items_in_transactions);
 void make_flist(unsigned int *d_trans_offset, unsigned int *d_transactions, unsigned int *d_flist,

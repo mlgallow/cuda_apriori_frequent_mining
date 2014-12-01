@@ -1,6 +1,10 @@
-
+import random
 f = open('topic-3.txt', 'w')
-a = [1,2,3,4,5,6,7]
+#a = [x for x in range(1, 256)]
+a = []
+for x in range(1,32):
+    #a.append(random.randint(1,32))
+    a.append(x)
 i = 0
 s = ''
 for item in a:

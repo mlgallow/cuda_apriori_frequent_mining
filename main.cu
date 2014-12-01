@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
 
     lines = 0;
     element_id = 0;
-    ifstream fp1("topic-4.txt");
+    ifstream fp1("topic-3.txt");
     string curline, space(" ");
     if (fp1.is_open()) {
         cout<<"file opened"<<endl;
@@ -116,6 +116,8 @@ int main(int argc, char* argv[])
     cuda_ret = cudaMemset(ci_d, 0, MAX_UNIQUE_ITEMS * sizeof(unsigned int));
     cuda_ret = cudaMemcpy(d_input, transactions, num_elements * sizeof(unsigned int), cudaMemcpyHostToDevice);
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
+    cuda_ret = cudaMemcpy(d_offsets, trans_offset, (num_transactions+1) * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
     
     dim3 grid_dim, block_dim;
     block_dim.x = BLOCK_SIZE; 
@@ -172,25 +174,19 @@ int main(int argc, char* argv[])
         } 
     }
 
-#ifdef TEST_PARAMS
+//#ifdef TEST_PARAMS
     cout<<"li_h after pruning:"<<endl;
     for (int i = 0; i < k; i++) {
         cout<<"li_h["<<i<<"]="<<li_h[i]<<endl;   
     }
-#endif
+//#endif
     unsigned int *li_d;
     cuda_ret = cudaMalloc((void**)&li_d, k * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cudaMemcpy(li_d, li_h, k * sizeof(unsigned int), cudaMemcpyHostToDevice);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy li_h to device");
-    /*
-    block_dim.x = BLOCK_SIZE; 
-    block_dim.y = 1; block_dim.z = 1;
-    grid_dim.x = ceil(k / (1.0 * BLOCK_SIZE)); 
-    grid_dim.y = 1; grid_dim.z = 1;
-    cout<<"launching selfJoin Kernel(grid, block):"<<grid_dim.x<<","<<block_dim.x<<endl;
-*/
+    
     int maskLength = pow(float(k), 2);
     cout <<"maskLength ="<<maskLength<<endl;
     int *mask_h = (int*)malloc(maskLength * sizeof(int));
@@ -212,19 +208,32 @@ int main(int argc, char* argv[])
     initializeMaskArray<<<grid_dim, block_dim>>>(mask_d, maskLength);
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
     cudaDeviceSynchronize();
-/*
+
     block_dim.x = BLOCK_SIZE;
     block_dim.y = 1;
     block_dim.y = 1;
-    grid_dim.x = (int) ceil((maskLength) / (1.0 * MAX_ITEM_PER_SM));
+    grid_dim.x = (int) ceil(k / (1.0 * MAX_ITEM_PER_SM));
     grid_dim.y = 1;
     grid_dim.z = 1;
     cout<<"self join launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
-    selfJoinKernel<<<grid_dim, block_dim>>>(li_d, d_mask, actualNumItems);
+    selfJoinKernel<<<grid_dim, block_dim>>>(li_d, mask_d, k, power);
     cudaDeviceSynchronize();
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
-    cudaDeviceSynchronize();*/
+  
+    cout<<"copy mask back to host"<<endl;
+    startTime(&timer);
+    cudaMemcpy(mask_h, mask_d, maskLength * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+//#ifdef TEST_PARAMS
+    cout<<"mask_h"<<endl;
+    for (int i = 0;i < maskLength; i++) {
+        cout<<"mask["<<i<<"]="<<mask_h[i]<<endl;   
+        
+    }
+//#endif
 #if 0
 
     unsigned int *d_flist, *d_flist_key_16;
