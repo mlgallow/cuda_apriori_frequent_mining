@@ -10,7 +10,7 @@ default: $(EXE)
 test-mode: NVCC_FLAGS += -DTEST_MODE
 test-mode: default
 
-main.o: main.cu kernel.cu support.h defs.h
+main.o: main.cu kernel.cu kernel_prescan.cu support.h defs.h
 	$(NVCC) -c -o $@ main.cu $(NVCC_FLAGS)
 
 support.o: support.cu support.h

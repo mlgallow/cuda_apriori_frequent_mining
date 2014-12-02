@@ -8,6 +8,7 @@
 #include "defs.h"
 #include "support.h"
 #include "kernel.cu"
+#include "kernel_prescan.cu"
 #include<vector>
 #include<utility>
 using namespace std;
@@ -306,6 +307,24 @@ int main(int argc, char* argv[])
 #ifdef TEST_PARAMS
     for (int i = 0; i < k; i++) {
         cout<<"ci_dn["<<i<<"]="<<ci_hn[i]<<endl;    
+    }
+#endif
+    // prescan the ci_hn array
+    unsigned int *ci_hnx;
+    unsigned int *ci_dnx;
+    ci_hnx = (unsigned int*) malloc(k * sizeof (unsigned int));
+    cuda_ret = cudaMalloc((void**)&ci_dnx, k * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cudaMemset(ci_dnx, 0, k * sizeof(unsigned int));
+
+    preScan(ci_dnx, ci_dn, k);
+    cudaMemcpy(ci_hnx, ci_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+#ifdef TEST_PARAMS
+    cout<<"scan op"<<endl;
+    for (int i = 0; i < k; i++) {
+        cout<<"ci_dnx["<<i<<"]="<<ci_hnx[i]<<endl;    
     }
 #endif
 exit:
