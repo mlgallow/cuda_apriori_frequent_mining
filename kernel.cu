@@ -15,6 +15,7 @@
 #include "defs.h"
 #include "support.h"
 #include<iostream>
+#include<stdio.h>
 using namespace std;
 /*__constant__ unsigned short dc_flist_key_16_index[max_unique_items];
 __global__ void histogram_kernel_naive(unsigned int* input, unsigned int* bins,
@@ -141,6 +142,87 @@ __global__ void selfJoinKernel(unsigned int *input_d, int *output_d, int num_ele
             }
         }
         current_smid++;    
+    }
+}
+__global__ void findFrequencyGPU_kernel(unsigned int *d_transactions, 
+                                 unsigned int *d_offsets,
+                                 int num_transactions,
+                                 int num_elements,
+                                 unsigned int* d_keyIndex,
+                                 int* d_mask,
+                                 int num_patterns,
+                                 int maskLength) {
+    __shared__ unsigned int Ts[MAX_TRANSACTION_PER_SM][MAX_ITEM_PER_TRANSACTION];
+    int tx = threadIdx.x;
+    
+    int index = tx + blockDim.x * blockIdx.x;
+    int trans_index = blockIdx.x * MAX_TRANSACTION_PER_SM; 
+    //init the SM
+    for (int i = 0;i < MAX_TRANSACTION_PER_SM; i++) {
+        if (tx < MAX_ITEM_PER_TRANSACTION) {
+            Ts[i][tx] = -1; 
+        }
+    }
+    __syncthreads();
+    // bring the trnsactions to the SM 
+    for (int i = 0;i < MAX_TRANSACTION_PER_SM; i++) {
+        int item_ends = num_elements;
+        if ((trans_index + i + 1) == num_transactions) {
+            item_ends = num_elements;
+        } else if ((trans_index + i + 1) < num_transactions) {
+            item_ends = d_offsets[trans_index + i + 1];
+        } else
+            continue;
+       if ((tx + d_offsets[trans_index + i]) < item_ends and tx < MAX_ITEM_PER_TRANSACTION) {
+           Ts[i][tx] = d_transactions[d_offsets[trans_index + i] + tx];
+       }
+    }
+
+    __syncthreads();
+
+   for (int maskid = 0; maskid < int(ceil(num_patterns/(1.0 * blockDim.x)));maskid++) {
+       int loop_tx = tx + maskid * blockDim.x;
+       if (loop_tx >= num_patterns) continue;
+       
+       for (int last_seen = 0; last_seen < num_patterns; last_seen++) {
+           if (loop_tx * num_patterns + last_seen >= maskLength) {
+               break;
+           }
+          if (d_mask[loop_tx * num_patterns + last_seen] < 0) continue;
+           
+           int item1 = d_keyIndex[loop_tx];
+           int item2 = d_keyIndex[last_seen];
+           //if (blockIdx.x == 0 && tx == 0)
+           //printf("(tx=%d,bx=%d,item1=%d,item2=%d)\n", tx, blockIdx.x, item1, item2);
+           for (int tid = 0; tid < MAX_TRANSACTION_PER_SM;tid++) {
+               bool flag1 = false;
+               bool flag2 = false;
+               for (int titem = 0;titem < MAX_ITEM_PER_TRANSACTION;titem++) {
+                   //if (blockIdx.x == 0 && tx==0)
+                   //printf("(tx=%d,titem=%d)\n", tx, Ts[tid][titem]);
+                   if (Ts[tid][titem] == item1) {
+                       flag1 = true;
+                   } else if (Ts[tid][titem] == item2) {
+                       flag2 = true;
+                   }
+               }
+               bool present_flag = flag1 & flag2;
+               if (present_flag)
+                   atomicAdd(&d_mask[loop_tx * num_patterns + last_seen], 1);
+           }
+       }    
+   }
+   
+}
+__global__ void pruneMultipleGPU(int *mask_d, int num_patterns, int min_sup) { 
+    int index_x = threadIdx.x + blockDim.x * blockIdx.x;
+    int index_y = threadIdx.y + blockDim.y * blockIdx.y;
+
+    if (index_x < num_patterns && index_y < num_patterns) {
+        int data_index = index_y * num_patterns + index_x;    
+        if (mask_d[data_index] < min_sup) {
+            mask_d[data_index] = 0;    
+        }
     }
 }
 #if 0
