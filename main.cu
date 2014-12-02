@@ -304,11 +304,11 @@ int main(int argc, char* argv[])
     cudaMemcpy(ci_hn, ci_dn, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
-#ifdef TEST_PARAMS
+//#ifdef TEST_PARAMS
     for (int i = 0; i < k; i++) {
         cout<<"ci_dn["<<i<<"]="<<ci_hn[i]<<endl;    
     }
-#endif
+//#endif
     // prescan the ci_hn array
     unsigned int *ci_hnx;
     unsigned int *ci_dnx;
@@ -321,10 +321,41 @@ int main(int argc, char* argv[])
     cudaMemcpy(ci_hnx, ci_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
-#ifdef TEST_PARAMS
+//#ifdef TEST_PARAMS
     cout<<"scan op"<<endl;
     for (int i = 0; i < k; i++) {
         cout<<"ci_dnx["<<i<<"]="<<ci_hnx[i]<<endl;    
+    }
+//#endif
+
+    unsigned int *sparseM_h;
+    unsigned int *sparseM_d;
+    unsigned int sparse_matrix_size = ci_hnx[k-1];
+    cout<<"allocating sparse matrix for size"<<sparse_matrix_size<<endl; 
+    sparseM_h = (unsigned int*) malloc(3 *sparse_matrix_size * sizeof (unsigned int));
+    cuda_ret = cudaMalloc((void**)&sparseM_d, 3 * sparse_matrix_size * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cudaMemset(sparseM_d, 0, 3 * sparse_matrix_size * sizeof(unsigned int));
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = 1;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil(k / (1.0 * block_dim.x));
+    grid_dim.y = 1;
+    grid_dim.z = 1;
+    cout<<" convert2Sparse kernel <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    convert2Sparse<<<grid_dim, block_dim>>>(mask_d, ci_dnx, sparseM_d, sparse_matrix_size, k);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to launch convert2Sparse");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    
+    cudaMemcpy(sparseM_h, sparseM_d, 3 * sparse_matrix_size * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+#ifdef TEST_PARAMS
+    cout<<"sparse op(row,col,val)"<<endl;
+    for (int i = 0; i < sparse_matrix_size; i++) {
+        cout<<"sparse("<<sparseM_h[i]<<","<<sparseM_h[i + sparse_matrix_size]<<","<<sparseM_h[i + 2*sparse_matrix_size]<<")"<<endl;    
     }
 #endif
 exit:
@@ -346,12 +377,16 @@ exit:
     if (ci_hn) {
         free(ci_hn);    
     }
+    if (ci_hnx) {
+        free(ci_hnx);    
+    }
     cudaFree(d_offsets);
     cudaFree(d_input);
     cudaFree(ci_d);
     cudaFree(li_d);
     cudaFree(mask_d);
     cudaFree(ci_dn);
+    cudaFree(ci_dnx);
     cout<<"program end";
 
 }

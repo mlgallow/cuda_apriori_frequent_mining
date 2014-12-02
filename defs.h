@@ -1,4 +1,4 @@
-#define TEST_PARAMS
+//#define TEST_PARAMS
 #ifdef TEST_PARAMS
 
 #define MAX_UNIQUE_ITEMS 64

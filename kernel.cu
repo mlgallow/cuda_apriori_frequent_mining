@@ -237,6 +237,26 @@ __global__ void combinationsAvailable_kernel(int*mask_d, unsigned int*ci_dn, int
         }
     }
 }
+__global__ void convert2Sparse(int *input_d,
+                               unsigned int *offset_d,
+                               unsigned int *output_d, 
+                               unsigned int num_patterns,
+                               unsigned int k) {
+    int index = threadIdx.x + blockDim.x * blockIdx.x;
+    
+    if (index < (k-1)) {
+        int col_start = offset_d[index];
+        for (int i =0;i < k;i++) {
+            int support_value = input_d[index * k + i];
+            if (support_value > 0) {
+                output_d[col_start] = index;
+                output_d[col_start + num_patterns] = i;
+                output_d[col_start + 2 * num_patterns] = support_value;
+                col_start++;
+            }
+        }
+    }        
+}
 #if 0
     //make_flist(d_trans_offsets, d_transactions, d_flist, num_transactions, num_items_in_transactions);
 void make_flist(unsigned int *d_trans_offset, unsigned int *d_transactions, unsigned int *d_flist,
