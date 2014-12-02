@@ -251,12 +251,13 @@ int main(int argc, char* argv[])
     block_dim.x = BLOCK_SIZE;
     block_dim.y = BLOCK_SIZE;
     block_dim.y = 1;
-    grid_dim.x = (int) ceil((block_dim.x) / (1.0 * block_dim.x));
-    grid_dim.y = (int) ceil((block_dim.x) / (1.0 * block_dim.x));
+    grid_dim.x = (int) ceil(k / (1.0 * block_dim.x));
+    grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
     grid_dim.z = 1;
-    cout<<"findFrequencyGPU kernel"<<endl;
+    //cout<<"gridy"<<grid_dim.y<<endl;
+    cout<<"pruneMultipleGPU <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
-    pruneMultipleGPU<<<grid_dim, block_dim>>>(mask_d, k, MIN_SUPPORT);
+    pruneMultipleGPU_kernel<<<grid_dim, block_dim>>>(mask_d, k, MIN_SUPPORT);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch pruneMultipleGPU");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
@@ -272,6 +273,39 @@ int main(int argc, char* argv[])
     for (int i = 0;i < maskLength; i++) {
         cout<<"mask["<<i<<"]="<<mask_h[i]<<endl;   
         
+    }
+#endif
+    //now we need to convert the mask array to a sparse matrix in parallel
+    // this means we need to find number of non zero entries in each row of mask matrix
+    // and the allocate memory equal to total number of non zero items.
+    // each thread can then directly work on an offset into the array, 
+    // obtained by perorming a exclusive scan.
+    unsigned int *ci_dn;
+    unsigned int *ci_hn;
+    ci_hn = (unsigned int*) malloc(k * sizeof (unsigned int));
+    cuda_ret = cudaMalloc((void**)&ci_dn, k * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cudaMemset(ci_dn, 0, k * sizeof(unsigned int));
+    
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = BLOCK_SIZE;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil(k / (1.0 * block_dim.x));
+    grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
+    grid_dim.z = 1;
+
+    cout<<"combinationsAvailable_kernel <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    combinationsAvailable_kernel<<<grid_dim, block_dim>>>(mask_d, ci_dn, k, maskLength);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to launch combinationsAvailable_kernel");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    cudaMemcpy(ci_hn, ci_dn, k * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+#ifdef TEST_PARAMS
+    for (int i = 0; i < k; i++) {
+        cout<<"ci_dn["<<i<<"]="<<ci_hn[i]<<endl;    
     }
 #endif
 exit:
@@ -290,11 +324,15 @@ exit:
     if (mask_h) {
         free(mask_h);    
     }
+    if (ci_hn) {
+        free(ci_hn);    
+    }
     cudaFree(d_offsets);
     cudaFree(d_input);
     cudaFree(ci_d);
     cudaFree(li_d);
     cudaFree(mask_d);
+    cudaFree(ci_dn);
     cout<<"program end";
 
 }

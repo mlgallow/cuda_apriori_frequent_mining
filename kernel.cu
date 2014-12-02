@@ -214,14 +214,26 @@ __global__ void findFrequencyGPU_kernel(unsigned int *d_transactions,
    }
    
 }
-__global__ void pruneMultipleGPU(int *mask_d, int num_patterns, int min_sup) { 
+__global__ void pruneMultipleGPU_kernel(int *mask_d, int num_patterns, int min_sup) { 
     int index_x = threadIdx.x + blockDim.x * blockIdx.x;
     int index_y = threadIdx.y + blockDim.y * blockIdx.y;
 
     if (index_x < num_patterns && index_y < num_patterns) {
         int data_index = index_y * num_patterns + index_x;    
+        //printf("index%d,indexy%d,index%d\n", index_x, index_y,data_index);
         if (mask_d[data_index] < min_sup) {
             mask_d[data_index] = 0;    
+        }
+    }
+}
+
+__global__ void combinationsAvailable_kernel(int*mask_d, unsigned int*ci_dn, int num_patterns, int maskLength) {
+    int index_x = threadIdx.x + blockDim.x * blockIdx.x;
+    int index_y = threadIdx.y + blockDim.y * blockIdx.y;
+    int mask_index = index_y * num_patterns + index_x;
+    if (mask_index < maskLength) {
+        if (index_x < num_patterns && index_y < num_patterns && mask_d[mask_index] > 0) {
+            atomicAdd(&ci_dn[index_y], 1);
         }
     }
 }
