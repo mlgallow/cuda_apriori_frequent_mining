@@ -261,10 +261,10 @@ int main(int argc, char* argv[])
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
 #ifdef TEST_PARAMS
-    /*cout<<"histogram output after pruning:"<<endl;
+    cout<<"histogram output after pruning:"<<endl;
     for (int i = 0; i < MAX_UNIQUE_ITEMS; i++) {
         cout<<"ci_h["<<i<<"]="<<ci_h[i]<<endl;   
-    } */    
+    }    
 #endif
     unsigned int *li_h; // this list contains the actual items which passed min support test
     unsigned int  k = 0; //count of actual items which passed min support test
@@ -286,12 +286,12 @@ int main(int argc, char* argv[])
         } 
     }
 
-//#ifdef TEST_PARAMS
+#ifdef TEST_PARAMS
     cout<<"li_h after pruning:"<<endl;
     for (int i = 0; i < k; i++) {
         cout<<"li_h["<<i<<"]="<<li_h[i]<<endl;   
     }
-//#endif
+#endif
     unsigned int *li_d;
     cuda_ret = cudaMalloc((void**)&li_d, k * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
@@ -320,7 +320,6 @@ int main(int argc, char* argv[])
     initializeMaskArray<<<grid_dim, block_dim>>>(mask_d, maskLength);
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
     cudaDeviceSynchronize();
-
     block_dim.x = BLOCK_SIZE;
     block_dim.y = 1;
     block_dim.y = 1;
@@ -341,11 +340,11 @@ int main(int argc, char* argv[])
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
 #ifdef TEST_PARAMS
-    cout<<"################mask_h after join#############"<<endl;
+    /*cout<<"################mask_h after join#############"<<endl;
     for (int i = 0;i < maskLength; i++) {
         cout<<"mask["<<i<<"]="<<mask_h[i]<<endl;   
         
-    }
+    }*/
 #endif
     block_dim.x = BLOCK_SIZE;
     block_dim.y = 1;
@@ -381,11 +380,11 @@ int main(int argc, char* argv[])
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
 #ifdef TEST_PARAMS
-    cout<<"################mask_h after findFrequencyGPU_kernel and Prune#############"<<endl;
+    /*cout<<"################mask_h after findFrequencyGPU_kernel and Prune#############"<<endl;
     for (int i = 0;i < maskLength; i++) {
         cout<<"mask["<<i<<"]="<<mask_h[i]<<endl;   
         
-    }
+    }*/
 #endif
     //now we need to convert the mask array to a sparse matrix in parallel
     // this means we need to find number of non zero entries in each row of mask matrix
@@ -463,10 +462,10 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
 #ifdef TEST_PARAMS
-    cout<<"sparse op(row,col,val)"<<endl;
+    /*cout<<"sparse op(row,col,val)"<<endl;
     for (int i = 0; i < sparse_matrix_size; i++) {
         cout<<"sparse("<<sparseM_h[i]<<","<<sparseM_h[i + sparse_matrix_size]<<","<<sparseM_h[i + 2*sparse_matrix_size]<<")"<<endl;    
-    }
+    }*/
 #endif
     //now create a STL map and add the sparse matrix values to the map
     //map<map_pair, unsigned int> patterns;
@@ -492,14 +491,28 @@ int main(int argc, char* argv[])
     int actual_patterns_items_size = 0;
     for (it_modulo_map = patterns.begin();it_modulo_map != patterns.end();it_modulo_map++) {
         tuple t = it_modulo_map->first;
+        cout<<"tuple:";
+        t.print();
+        cout<<"----";
         //since now there is only 2 items in the tuple.
         tuple op = t.getFirstNitems(1);
         tuple op1 = t.getLastItem();
+        cout<<"split tuple=";
+        op.print();
+        cout<< "---";
+        op1.print();
+        cout<<endl;
         if (!isTuplePresent(new_modulo_map, op)) {
+            cout<<"adding tuple to api_h=";
+            op.print();
+            cout<<"id assigned="<<index_id<<endl;
             actual_patterns_items_size += op.size();
             new_modulo_map.push_back(std::pair<tuple, int>(op, index_id++));
         }
-        if (isTuplePresent(new_modulo_map, op1)) {
+        if (!isTuplePresent(new_modulo_map, op1)) {
+            cout<<"adding tuple to api_h=";
+            op1.print();
+            cout<<"id assigned="<<index_id<<endl;
             actual_patterns_items_size += op1.size();
             new_modulo_map.push_back(std::pair<tuple, int>(op1, index_id++)); 
         }
@@ -507,12 +520,14 @@ int main(int argc, char* argv[])
 
 #ifdef TEST_PARAMS
     for (it_modulo_map = new_modulo_map.begin(); it_modulo_map != new_modulo_map.end();it_modulo_map++) {
+        cout<<"id[";
         it_modulo_map->first.print();
-        cout<<"="<<it_modulo_map->second<<endl; 
+        cout<<"]="<<it_modulo_map->second<<endl; 
     }
 #endif
     cout<<"actual_patterns_items_size:"<<actual_patterns_items_size<<endl;
     int index_items_lookup_size = 3 * new_modulo_map.size();// (index_id, start, length)
+    cout<<"index_items_lookup_size :"<<index_items_lookup_size<<endl;
     unsigned int *actual_patterns_items = (unsigned int *) malloc(actual_patterns_items_size * sizeof (unsigned int));
     unsigned int *index_items_lookup = (unsigned int *) malloc(index_items_lookup_size * sizeof (unsigned int));
     int start_offset = 0;
@@ -526,7 +541,16 @@ int main(int argc, char* argv[])
             actual_patterns_items[start_offset++] = t.get(i);
         }
     }
-
+#ifdef TEST_PARAMS
+    /*
+    for (int i = 0;i < index_items_lookup_size/3;i++) {
+        cout<<"iil_h["<<i<<"]="<<"("<<index_items_lookup[i]<<","<<index_items_lookup[i+1]<<","<<index_items_lookup[i+2]<<")"<<endl;
+    }*/
+    for (int i = 0;i < index_items_lookup_size;i++) {
+        cout<<"iil_h["<<i<<"]="<<index_items_lookup[i]<<endl;
+    }
+#endif
+#if 0
     // now create the new encoded array
     unsigned int *new_new_patterns;
     unsigned int *new_new_patterns_d;
@@ -694,6 +718,13 @@ int main(int argc, char* argv[])
     }
 #endif
 exit:
+    ///////////////////////////////////
+    free(new_new_patterns);
+    free(sparseM_h1);
+    cudaFree(sparseM_d1);
+    cudaFree(actual_patterns_items_d);
+    cudaFree(index_items_lookup_d);
+#endif
     if (trans_offset) {
         free(trans_offset);
     }
@@ -715,6 +746,15 @@ exit:
     if (ci_hnx) {
         free(ci_hnx);    
     }
+    if (sparseM_h) {
+        free(sparseM_h);
+    }
+    if(actual_patterns_items) {
+        free(actual_patterns_items);
+    }
+    if (index_items_lookup) {
+        free(index_items_lookup);
+    }
     cudaFree(d_offsets);
     cudaFree(d_input);
     cudaFree(ci_d);
@@ -722,16 +762,7 @@ exit:
     cudaFree(mask_d);
     cudaFree(ci_dn);
     cudaFree(ci_dnx);
-    ///////////////////////////////////
-    free(actual_patterns_items);
-    free(index_items_lookup);
-    free(new_new_patterns);
-    free(sparseM_h1);
-    free(sparseM_h);
-    cudaFree(sparseM_d1);
     cudaFree(sparseM_d);
-    cudaFree(actual_patterns_items_d);
-    cudaFree(index_items_lookup_d);
     cout<<"program end";
 
 }
