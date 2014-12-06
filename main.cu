@@ -10,10 +10,96 @@
 #include "kernel.cu"
 #include "kernel_prescan.cu"
 #include<vector>
+#include<map>
 #include<utility>
+#include<algorithm>
 using namespace std;
 
+class map_pair{
+    public:
+    unsigned int row_item;
+    unsigned int col_item;
+    map_pair(unsigned int row, unsigned int col) {
+        this->row_item = row;
+        this->col_item = col;    
+    }
+    bool operator < (const map_pair& another) const {
+        if (this->row_item == another.row_item) return this->col_item < another.col_item;
+        else return this->row_item < another.row_item;
+    }
+    ~map_pair() {}
+};
 
+class tuple {
+    // ensure it doesnt exceed MAX_PATTERN
+    public:
+    vector<int> values;
+    tuple(int val1) {
+        values.push_back(val1);
+    }
+    tuple() {}
+    tuple(int val1, int val2) {
+        values.push_back(val1);
+        values.push_back(val2);    
+    }
+    tuple(int val1, int val2, int val3) {
+        values.push_back(val1);
+        values.push_back(val2);
+        values.push_back(val3);
+    }
+    
+    int size() {
+       return values.size(); 
+    }
+    void print() {
+        vector<int>::iterator it = values.begin();
+        cout<<"(";
+        while(it != values.end()) {
+            cout<<*it<<",";
+            it++; 
+        }
+        cout<<")";
+    }
+    bool operator==(const tuple &other) const {
+        if (values.size() != (other.values).size()) return false;
+        vector<int>::const_iterator it, it_other;
+        for (it = values.begin(), it_other = other.values.begin(); it != values.end();it++, it_other++) {
+            if (*it != *it_other) return false;
+        }
+        return true;
+    }
+    
+    bool insertValues(int item) {
+        if (values.size() >= MAX_PATTERN_SEARCH) return false;
+        values.push_back(item);
+        return true;
+    }
+    
+    tuple getFirstNitems(int n) {
+        if (n > values.size()) n = values.size();
+        vector<int>::iterator it = values.begin();
+        tuple op;
+        for (int i = 0;i < n;i++) {
+            op.insertValues(*it++);
+        }
+        return op;
+    }
+
+    tuple getLastItem() {
+        return values[values.size() - 1];
+    }
+};
+
+bool isTuplePresent(const vector<std::pair<tuple, int> >&list, const tuple &t) {
+    if (list.size() == 0) return false;
+    vector<std::pair<tuple, int> >::const_iterator it = list.begin();
+    while(it != list.end()) {
+        tuple cur_tuple = it->first;
+        if (cur_tuple == t) return true;
+        it++;
+    }
+    return false;
+}
 bool pair_compare(const pair<short unsigned int, unsigned int>& p1,const pair<short unsigned int, unsigned int>& p2);
 int main(int argc, char* argv[])
 {
@@ -26,18 +112,12 @@ int main(int argc, char* argv[])
     unsigned int *transactions = NULL;
     unsigned int *trans_offset = NULL;
     unsigned int *ci_h = NULL;//bins array for histogram op
-    //unsigned int *flist = NULL;
-    //unsigned short *flist_key_16_index = NULL;
 
     unsigned int element_id = 0;
 
     transactions = (unsigned int *) malloc(MAX_NUM_ELEMENTS * sizeof(unsigned int));
     trans_offset = (unsigned int *) malloc((MAX_NUM_ELEMENTS + 1) * sizeof(unsigned int));
     ci_h = (unsigned int *) malloc(MAX_UNIQUE_ITEMS * sizeof(unsigned int));
-    //flist = (unsigned int *) malloc(max_unique_items * sizeof(unsigned int));
-    //flist_key_16_index = (unsigned short*) malloc(max_unique_items * sizeof(unsigned short));
-
-//    memset(flist_key_16_index, 0xFFFF, max_unique_items * sizeof(unsigned short));
 
     lines = 0;
     element_id = 0;
@@ -332,7 +412,7 @@ int main(int argc, char* argv[])
     unsigned int *sparseM_d;
     unsigned int sparse_matrix_size = ci_hnx[k-1];
     cout<<"allocating sparse matrix for size"<<sparse_matrix_size<<endl; 
-    sparseM_h = (unsigned int*) malloc(3 *sparse_matrix_size * sizeof (unsigned int));
+    sparseM_h = (unsigned int*) malloc(3 * sparse_matrix_size * sizeof (unsigned int));
     cuda_ret = cudaMalloc((void**)&sparseM_d, 3 * sparse_matrix_size * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cudaMemset(sparseM_d, 0, 3 * sparse_matrix_size * sizeof(unsigned int));
@@ -356,6 +436,46 @@ int main(int argc, char* argv[])
     cout<<"sparse op(row,col,val)"<<endl;
     for (int i = 0; i < sparse_matrix_size; i++) {
         cout<<"sparse("<<sparseM_h[i]<<","<<sparseM_h[i + sparse_matrix_size]<<","<<sparseM_h[i + 2*sparse_matrix_size]<<")"<<endl;    
+    }
+#endif
+    //now create a STL map and add the sparse matrix values to the map
+    //map<map_pair, unsigned int> patterns;
+    vector<std::pair<tuple, int> > patterns;
+    cout<<"build vector from sparse array of length = "<<sparse_matrix_size<<endl;
+    for (int i = 0; i< sparse_matrix_size;i++) {
+        tuple t(sparseM_h[i], sparseM_h[i + sparse_matrix_size]);
+        int item = sparseM_h[i + 2 * sparse_matrix_size];
+        patterns.push_back(std::pair<tuple, unsigned int>(t, item));    
+    }
+    cout<<"map size"<<patterns.size()<<endl;
+#ifdef TEST_PARAMS
+    vector<std::pair<tuple, int> >::iterator it;
+    for (it = patterns.begin(); it != patterns.end();it++) {
+        it->first.print();
+        cout<<"="<<it->second<<endl;    
+    }
+#endif
+    vector<std::pair<tuple, int> > new_modulo_map;
+    //cout<<isTuplePresent(dict, t);
+    vector<std::pair<tuple, int> >::iterator it_modulo_map;
+    int index_id = 1;
+    for (it_modulo_map = patterns.begin();it_modulo_map != patterns.end();it_modulo_map++) {
+        tuple t = it_modulo_map->first;
+        //since now there is only 2 items in the tuple.
+        tuple op = t.getFirstNitems(1);
+        tuple op1 = t.getLastItem();
+        if (!isTuplePresent(new_modulo_map, op)) {
+            new_modulo_map.push_back(std::pair<tuple, int>(op, index_id++));
+        }
+        if (isTuplePresent(new_modulo_map, op1)) {
+            new_modulo_map.push_back(std::pair<tuple, int>(op1, index_id++)); 
+        }
+    }
+
+#ifdef TEST_PARAMS
+    for (it_modulo_map = new_modulo_map.begin(); it_modulo_map != new_modulo_map.end();it_modulo_map++) {
+        it_modulo_map->first.print();
+        cout<<"="<<it_modulo_map->second<<endl; 
     }
 #endif
 exit:

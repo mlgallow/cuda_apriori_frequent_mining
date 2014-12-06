@@ -173,7 +173,7 @@ __global__ void findFrequencyGPU_kernel(unsigned int *d_transactions,
             item_ends = d_offsets[trans_index + i + 1];
         } else
             continue;
-       if ((tx + d_offsets[trans_index + i]) < item_ends and tx < MAX_ITEM_PER_TRANSACTION) {
+       if ((tx + d_offsets[trans_index + i]) < item_ends && tx < MAX_ITEM_PER_TRANSACTION) {
            Ts[i][tx] = d_transactions[d_offsets[trans_index + i] + tx];
        }
     }
@@ -257,189 +257,102 @@ __global__ void convert2Sparse(int *input_d,
         }
     }        
 }
-#if 0
-    //make_flist(d_trans_offsets, d_transactions, d_flist, num_transactions, num_items_in_transactions);
-void make_flist(unsigned int *d_trans_offset, unsigned int *d_transactions, unsigned int *d_flist,
-        unsigned int num_transactions, unsigned int num_items_in_transactions, int SM_PER_BLOCK) {
-    
-    cudaError_t cuda_ret;
-    dim3 grid_dim, block_dim;
-    block_dim.x = BLOCK_SIZE; 
-    block_dim.y = 1; block_dim.z = 1;
-    grid_dim.x = ceil(num_items_in_transactions / (16.0 * BLOCK_SIZE)); 
-    grid_dim.y = 1; grid_dim.z = 1;
-    if (max_unique_items * sizeof(unsigned int) < SM_PER_BLOCK) {
-        // private histogram should fit in shared memory
-        histogram_kernel<<<grid_dim, block_dim, max_unique_items * sizeof(unsigned int)>>>(d_transactions, d_flist, num_items_in_transactions);
-    } else {
-        // private histogram will not fit in shared memory. launch global kernel
-        histogram_kernel_naive<<<grid_dim, block_dim>>>(d_transactions, d_flist, num_items_in_transactions, max_unique_items);
-    }
-    
-    cuda_ret = cudaDeviceSynchronize();
-    if(cuda_ret != cudaSuccess) FATAL("Unable to launch kernel");
-}
-    
-   
-   
-   
-__global__ void sort_transaction_kernel(unsigned short *d_flist_key_16_index, unsigned int *d_flist, unsigned int *d_transactions,
-        unsigned int *offset_array, unsigned int num_transactions, unsigned int num_elements, unsigned int bins, bool indexFileInConstantMem) {
-   
-    //unsigned int transaction_index = threadIdx.x + blockDim.x * blockIdx.x;
-    //unsigned int stride = blockDim.x * gridDim.x;
-    unsigned int i = 0;
-    unsigned int j = 0;
-    unsigned int swap = 0;
-    unsigned int start_offset = 0;
-    unsigned int end_offset = 0;
-    unsigned int index1 = 0;
-    unsigned int transaction_start_index = blockDim.x * blockIdx.x;
-    //TBD: need to pass dynamically
-    __shared__ unsigned int Ts[TRANSACTION_PER_SM][max_items_in_transaction];
-    
-    while (transaction_start_index < num_transactions) {
-    unsigned int index = threadIdx.x;
-    unsigned int transaction_end_index = transaction_start_index +  blockDim.x;
-    
-    __syncthreads();
-    // clear SM 
-    for (i = 0; i < TRANSACTION_PER_SM; i++) {
-        while (index < max_items_in_transaction) {
-            Ts[i][index] = 0;//INVALID;
-            index += blockDim.x;
-        }
-        __syncthreads();
-    }
-    // get all the transaction assigned to this block into SM
-    for (i = transaction_start_index; i < transaction_end_index && i < num_transactions; i++) {
-        // get the ith transaction data into SM
-        start_offset = offset_array[i];
-        end_offset = offset_array[i+1];
-        index1 = start_offset + threadIdx.x;
-        __syncthreads();
-        // threads collaborate to get the ith transaction
-        while (index1 < end_offset) {
-            Ts[i-transaction_start_index][index1 - start_offset] = d_transactions[index1];        
-            index1 += blockDim.x;
-        }
-        __syncthreads();
-    }
 
-    // now that all transactions are in SM, each thread takes ownership of a row of SM
-    // (i.e. one transaction per thread)
-    if (threadIdx.x < TRANSACTION_PER_SM) {
-        //to test basic functionality
-        /*for (int i =0; i < max_items_in_transaction;i++) {
-            if (Ts[threadIdx.x][i] < INVALID) {
-                Ts[threadIdx.x][i]++;
-            }
-        }*/
-    }
-//endloop:
-    __syncthreads();
-    // now that work is done write back results 
-    for (i = transaction_start_index; i < transaction_end_index && i < num_transactions; i++) {
-        // get the ith transaction data from SM to global mem
-        start_offset = offset_array[i];
-        end_offset = offset_array[i+1];
-        index1 = start_offset + threadIdx.x;
-        __syncthreads();
-        while (index1 < end_offset) {
-            d_transactions[index1] = Ts[i - transaction_start_index][index1 - start_offset];        
-            index1 += blockDim.x;
-        }
-        __syncthreads();
-    }
-    transaction_start_index += (blockDim.x * gridDim.x);
-    }
-} 
-
-void sort_transaction(unsigned short *d_flist_key_16_index, unsigned int *d_flist, unsigned int *d_transactions, unsigned int *offset_array, unsigned int num_transactions, unsigned int num_items_in_transactions, unsigned int bins,bool indexFileInConstantMem) {
-    cudaDeviceProp deviceProp;
-    cudaError_t ret;
-    cudaGetDeviceProperties(&deviceProp, 0);
-    int SM_PER_BLOCK = deviceProp.sharedMemPerBlock;
+__global__ void findHigherPatternFrequencyGPU(unsigned int *d_transactions, unsigned int *d_offsets,
+                                              int num_transactions, int num_elements, unsigned int* d_keyIndex,
+                                              int *d_mask, int num_patterns, int *api_d, int *iil_d, int power,
+                                              int size_api_d, int size_iil_d, int maskLength) {
     
-    dim3 block_dim;
-    dim3 grid_dim;
-    
-    unsigned int bytesPerTransaction = max_items_in_transaction * sizeof(unsigned int);
-    
-    block_dim.x = ((SM_PER_BLOCK / bytesPerTransaction) - 10) > TRANSACTION_PER_SM ? TRANSACTION_PER_SM : ((SM_PER_BLOCK / bytesPerTransaction) - 10);
-    block_dim.y = 1;
-    block_dim.y = 1;
+    __shared__ unsigned int Ts[MAX_TRANSACTION_PER_SM][MAX_ITEM_PER_TRANSACTION];
+    int tx = threadIdx.x;
+    int index = tx + blockDim.x * blockIdx.x;
+    int trans_index = blockIdx.x * MAX_TRANSACTION_PER_SM;
 
-    grid_dim.x = (int) ceil(num_transactions / (2.0 * block_dim.x));
-    grid_dim.y = 1;
-    grid_dim.z = 1;
-#ifdef TEST_MODE
-    cout<<"sort_transaction_kernel<bx,gx>"<<block_dim.x<<","<<grid_dim.x<<endl;
-#endif
-    sort_transaction_kernel<<<grid_dim, block_dim>>>(d_flist_key_16_index, d_flist, d_transactions, offset_array,
-            num_transactions, num_items_in_transactions, bins, indexFileInConstantMem); 
-    ret = cudaDeviceSynchronize();
-    if(ret != cudaSuccess) FATAL("Unable to launch kernel");
-    
-    
-}
-
-__global__ void pruneList(unsigned int *input, int num_elements, int min_support) {
-    int index = threadIdx.x + blockDim.x * blockIdx.x;
-
-    if (index < num_elements) {
-        if (input[index] < min_support) {
-            input[index] = 0;    
-        }    
-    }
-} 
-
-
-__global__ void selfJoinKernel(int *input, int *mask, int num_elements) {
-    int start = blockIdx.x * MAX_ITEM_PER_SM; 
-    __shared__ int sm1[MAX_ITEM_PER_SM];   
-    __shared__ int sm2[MAX_ITEM_PER_SM];
-    int location_x = 0;
-    for (int i = 0; i < ceil(MAX_ITEM_PER_SM / (1.0 * blockDim.x));i++) {
-        location_x = threadIdx.x + i * blockDim.x;
-        if (location_x < num_elements) {
-            sm1[location_x] = input[start + location_x]; 
-        }    
-    }
-    
-    __syncthreads();
-    for (int i = 0; i < ceil(MAX_ITEM_PER_SM / 1.0 * blockDim.x);i++) {
-        int loop_tx = threadIdx.x + i * blockDim.x;
-        for (int j = loop_tx + 1; j < MAX_ITEM_PER_SM; j++) {
-            if ((sm1[loop_tx] / 10) == sm1[j] / 10) {
-                mask[(start + loop_tx) * num_elements + (start + j)] = 0;    
-            } else {
-                mask[(start + loop_tx) * num_elements + (start + j)] = -1; // not needed ??    
-            }
-        }
-    }
-    
-    for (int smid = blockIdx.x + 1; smid < ceil(num_elements/ (1.0 * MAX_ITEM_PER_SM));smid++) {
-        for (int i = 0; i < ceil(MAX_ITEM_PER_SM / (1.0 * blockDim.x)); i++) {
-            location_x = threadIdx.x + i * blockDim.x;
-            if (location_x < num_elements) {
-                sm2[location_x] = input[smid * MAX_ITEM_PER_SM + start + location_x];    
-            }
-        }
-        __syncthreads();
-
-        for (int i = 0; i < ceil(MAX_ITEM_PER_SM / (1.0 * blockDim.x)); i++) {
-            int loop_tx = threadIdx.x + i * blockDim.x;
-            for (int j = 0; j < MAX_ITEM_PER_SM; j++) {
-                if ((sm1[loop_tx] / 10) == (sm2[j] / 10)) {
-                    mask[(start + loop_tx) * num_elements + smid * MAX_ITEM_PER_SM + j] = 0;
-                } else {
-                    mask[(start + loop_tx) * num_elements + smid * MAX_ITEM_PER_SM + j] = -1;
-                }
-                
-            } 
-            
-        }
+    for (int i = 0; i < MAX_TRANSACTION_PER_SM;i++) {
+        if (tx < MAX_ITEM_PER_TRANSACTION)  {
+            Ts[i][tx] = -1;   
+        } 
     } 
+    __syncthreads();
+    // bring items in SM 
+    for (int i = 0;i < MAX_TRANSACTION_PER_SM; i++) {
+        int item_ends = num_elements;
+        if ((trans_index + i + 1) == num_transactions) {
+            item_ends = num_elements;
+        } else if ((trans_index + i + 1) < num_transactions) {
+            item_ends = d_offsets[trans_index + i + 1];
+        } else
+            continue;
+       if ((tx + d_offsets[trans_index + i]) < item_ends && tx < MAX_ITEM_PER_TRANSACTION) {
+           Ts[i][tx] = d_transactions[d_offsets[trans_index + i] + tx];
+       }
+    }
+    __syncthreads();
+
+   for (int maskid = 0; maskid < int(ceil(num_patterns/(1.0 * blockDim.x)));maskid++) {
+       int loop_tx = tx + maskid * blockDim.x;
+       if (loop_tx >= num_patterns) continue;
+       
+       for (int last_seen = 0; last_seen < num_patterns; last_seen++) {
+          //extra check
+          if (loop_tx * num_patterns + last_seen >= maskLength) {
+              break;
+          }
+          if (d_mask[loop_tx * num_patterns + last_seen] < 0) continue;
+           
+           int hp1 = d_keyIndex[loop_tx];
+           int hp2 = d_keyIndex[last_seen];
+           int divisor = (int)(pow(10.0, (double)power));
+           int vitem1 = hp1 % divisor; 
+           int vitem2 = hp2 % divisor;
+           //if (blockIdx.x == 0 && tx == 0)
+           //printf("(tx=%d,bx=%d,item1=%d,item2=%d)\n", tx, blockIdx.x, item1, item2);
+           // now decode virtual item
+           int index_item1 = 0;
+           int index_item2 = 0;
+           int item1 = 0;
+           int item2 = 0;
+           if ( ((vitem1 - 1) * 3 + 1) < size_iil_d 
+               && ((vitem2 - 1) * 3 + 1) < size_iil_d) {
+               index_item1 = iil_d[(vitem1 - 1) * 3 + 1];
+               index_item2 = iil_d[(vitem2 - 1) * 3 + 1];
+
+               if (index_item1 < size_api_d && index_item2 < size_api_d) {
+                   item1 = api_d[index_item1];
+                   item2 = api_d[index_item2];
+               } else continue;
+           } else continue;
+
+           int vcommon_pattern = hp1 / divisor;
+           int vpat1 = 0;
+           if (((vcommon_pattern - 1) * 3 + 1) < size_iil_d) {
+               int index_vpat1 = iil_d[(vcommon_pattern - 1) * 3 + 1];
+               if (index_vpat1 < size_api_d) {
+                   vpat1 = api_d[index_vpat1];
+               } else continue;
+           } else continue;
+
+
+           for (int tid = 0; tid < MAX_TRANSACTION_PER_SM;tid++) {
+               // TBD: define a flag array of 
+               bool flag1 = false;
+               bool flag2 = false;
+               bool fpat1 = false;
+               for (int titem = 0;titem < MAX_ITEM_PER_TRANSACTION;titem++) {
+                   //if (blockIdx.x == 0 && tx==0)
+                   //printf("(tx=%d,titem=%d)\n", tx, Ts[tid][titem]);
+                   if (Ts[tid][titem] == item1) {
+                       flag1 = true;
+                   } else if (Ts[tid][titem] == item2) {
+                       flag2 = true;
+                   } else {
+                       fpat1 = true;    
+                   }
+               }
+               bool present_flag = flag1 & flag2& fpat1;
+               if (present_flag)
+                   atomicAdd(&d_mask[loop_tx * num_patterns + last_seen], 1);
+           }
+       }    
+   }
 }
-#endif
