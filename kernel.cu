@@ -260,7 +260,7 @@ __global__ void convert2Sparse(int *input_d,
 
 __global__ void findHigherPatternFrequencyGPU(unsigned int *d_transactions, unsigned int *d_offsets,
                                               int num_transactions, int num_elements, unsigned int* d_keyIndex,
-                                              int *d_mask, int num_patterns, int *api_d, int *iil_d, int power,
+                                              int *d_mask, int num_patterns, unsigned int *api_d,unsigned  int *iil_d, int power,
                                               int size_api_d, int size_iil_d, int maskLength) {
     
     __shared__ unsigned int Ts[MAX_TRANSACTION_PER_SM][MAX_ITEM_PER_TRANSACTION];

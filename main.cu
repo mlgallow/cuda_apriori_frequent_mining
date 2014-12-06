@@ -40,17 +40,27 @@ class tuple {
     tuple() {}
     tuple(int val1, int val2) {
         values.push_back(val1);
-        values.push_back(val2);    
+        values.push_back(val2);
+        std::sort(values.begin(), values.end());    
     }
     tuple(int val1, int val2, int val3) {
         values.push_back(val1);
         values.push_back(val2);
         values.push_back(val3);
+        std::sort(values.begin(), values.end());    
     }
+   
+    int get(int index) {
+        if (index >= values.size()) index = values.size();
+        else if (index < 0) index = 0;
+        
+        return values[index];  
+    } 
     
     int size() {
        return values.size(); 
     }
+    
     void print() {
         vector<int>::iterator it = values.begin();
         cout<<"(";
@@ -99,6 +109,27 @@ bool isTuplePresent(const vector<std::pair<tuple, int> >&list, const tuple &t) {
         it++;
     }
     return false;
+}
+
+int  getTupleValue(const vector<std::pair<tuple, int> >&list, const tuple &t) {
+    if (list.size() == 0) return INVALID;
+    vector<std::pair<tuple, int> >::const_iterator it = list.begin();
+    while(it != list.end()) {
+        tuple cur_tuple = it->first;
+        if (cur_tuple == t) {
+            return it->second;  
+        }
+        it++;
+    }
+    return false;
+}
+
+int compare(const void *a, const void *b) {
+    int a1 = *((int*)a);
+    int b1 = *((int*)b);
+    if (a1 == b1) return 0;
+    else if (a1 < b1) return -1;
+    else return 1;
 }
 bool pair_compare(const pair<short unsigned int, unsigned int>& p1,const pair<short unsigned int, unsigned int>& p2);
 int main(int argc, char* argv[])
@@ -396,7 +427,6 @@ int main(int argc, char* argv[])
     cuda_ret = cudaMalloc((void**)&ci_dnx, k * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cudaMemset(ci_dnx, 0, k * sizeof(unsigned int));
-
     preScan(ci_dnx, ci_dn, k);
     cudaMemcpy(ci_hnx, ci_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
@@ -459,15 +489,18 @@ int main(int argc, char* argv[])
     //cout<<isTuplePresent(dict, t);
     vector<std::pair<tuple, int> >::iterator it_modulo_map;
     int index_id = 1;
+    int actual_patterns_items_size = 0;
     for (it_modulo_map = patterns.begin();it_modulo_map != patterns.end();it_modulo_map++) {
         tuple t = it_modulo_map->first;
         //since now there is only 2 items in the tuple.
         tuple op = t.getFirstNitems(1);
         tuple op1 = t.getLastItem();
         if (!isTuplePresent(new_modulo_map, op)) {
+            actual_patterns_items_size += op.size();
             new_modulo_map.push_back(std::pair<tuple, int>(op, index_id++));
         }
         if (isTuplePresent(new_modulo_map, op1)) {
+            actual_patterns_items_size += op1.size();
             new_modulo_map.push_back(std::pair<tuple, int>(op1, index_id++)); 
         }
     }
@@ -476,6 +509,188 @@ int main(int argc, char* argv[])
     for (it_modulo_map = new_modulo_map.begin(); it_modulo_map != new_modulo_map.end();it_modulo_map++) {
         it_modulo_map->first.print();
         cout<<"="<<it_modulo_map->second<<endl; 
+    }
+#endif
+    cout<<"actual_patterns_items_size:"<<actual_patterns_items_size<<endl;
+    int index_items_lookup_size = 3 * new_modulo_map.size();// (index_id, start, length)
+    unsigned int *actual_patterns_items = (unsigned int *) malloc(actual_patterns_items_size * sizeof (unsigned int));
+    unsigned int *index_items_lookup = (unsigned int *) malloc(index_items_lookup_size * sizeof (unsigned int));
+    int start_offset = 0;
+    int counter = 0;
+    for (it_modulo_map = new_modulo_map.begin(); it_modulo_map != new_modulo_map.end();it_modulo_map++) {
+        tuple t = it_modulo_map->first;
+        index_items_lookup[counter++] = it->second;
+        index_items_lookup[counter++] = start_offset; 
+        index_items_lookup[counter++] = t.size();
+        for (int i =0; i < t.size();i++) {
+            actual_patterns_items[start_offset++] = t.get(i);
+        }
+    }
+
+    // now create the new encoded array
+    unsigned int *new_new_patterns;
+    unsigned int *new_new_patterns_d;
+    int new_new_patterns_size = patterns.size(); 
+    new_new_patterns = (unsigned int *) malloc(new_new_patterns_size * sizeof (unsigned int));
+    counter = 0;
+    int mul_factor = (int)(pow(10.0, (double)power));
+    for (it_modulo_map = patterns.begin();it_modulo_map != patterns.end();it_modulo_map++) {
+        tuple t = it_modulo_map->first;
+        //since now there is only 2 items in the tuple.
+        tuple op = t.getFirstNitems(1);
+        tuple op1 = t.getLastItem();
+        int code1 = getTupleValue(new_modulo_map, op);
+        int code2 = getTupleValue(new_modulo_map, op1);
+        if (code1 == INVALID || code2 == INVALID) continue;
+        
+        int newcode = code1 * mul_factor + code2;
+        new_new_patterns[counter++] = newcode;
+    }
+   
+    //may apply radix sort to sort it
+    qsort(new_new_patterns, sizeof(new_new_patterns)/sizeof(new_new_patterns[0]), sizeof(new_new_patterns[0]), compare);
+    //send the array to device
+    cuda_ret = cudaMalloc((void**)&new_new_patterns_d, new_new_patterns_size * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cuda_ret = cudaMemcpy(new_new_patterns_d, new_new_patterns_d, new_new_patterns_size * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    //#########################################################//
+    //############# start of second phase######################// 
+    // calculate parameters again for second phase
+    k = counter;
+    maskLength = pow(float(k), 2);
+    cout <<"maskLength ="<<maskLength<<endl;
+    cuda_ret = cudaMemset(mask_d, -1, maskLength * sizeof(int));
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = 1;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil(k / (1.0 * MAX_ITEM_PER_SM));
+    grid_dim.y = 1;
+    grid_dim.z = 1;
+    cout<<"self join launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    selfJoinKernel<<<grid_dim, block_dim>>>(li_d, mask_d, k, power);
+    cudaDeviceSynchronize();
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    
+    //TBD:remove. only for test
+    cout<<"copy mask back to host"<<endl;
+    startTime(&timer);
+    cudaMemcpy(mask_h, mask_d, maskLength * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+#ifdef TEST_PARAMS
+    cout<<"################mask_h after join#############"<<endl;
+    for (int i = 0;i < maskLength; i++) {
+        cout<<"mask["<<i<<"]="<<mask_h[i]<<endl;   
+        
+    }
+#endif
+    unsigned int *actual_patterns_items_d;
+    unsigned int *index_items_lookup_d;
+    cuda_ret = cudaMalloc((void**)&actual_patterns_items_d, actual_patterns_items_size * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cuda_ret = cudaMalloc((void**)&index_items_lookup_d, index_items_lookup_size * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+
+    cuda_ret = cudaMemcpy(actual_patterns_items_d, actual_patterns_items, actual_patterns_items_size * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
+    cuda_ret = cudaMemcpy(index_items_lookup_d, index_items_lookup, index_items_lookup_size * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
+
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = 1;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil((num_transactions) / (1.0 * MAX_TRANSACTION_PER_SM));
+    grid_dim.y = 1;
+    grid_dim.z = 1;
+    cout<<"findHigherPatternFrequencyGPU launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    findHigherPatternFrequencyGPU<<<grid_dim, block_dim>>>(d_input, d_offsets,
+                                  num_transactions, 
+                                  num_elements, new_new_patterns_d,
+                                  mask_d, k, actual_patterns_items_d,
+                                  index_items_lookup_d, power,
+                                  actual_patterns_items_size,
+                                  index_items_lookup_size, maskLength);
+    cudaDeviceSynchronize();
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+
+    // prune the matrix
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = BLOCK_SIZE;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil(k / (1.0 * block_dim.x));
+    grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
+    grid_dim.z = 1;
+    cout<<"pruneMultipleGPU <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    pruneMultipleGPU_kernel<<<grid_dim, block_dim>>>(mask_d, k, MIN_SUPPORT);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to launch pruneMultipleGPU");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+
+    //find combinations available
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = BLOCK_SIZE;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil(k / (1.0 * block_dim.x));
+    grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
+    grid_dim.z = 1;
+
+    cudaMemset(ci_dn, 0, k * sizeof(unsigned int));
+    cout<<"combinationsAvailable_kernel <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    combinationsAvailable_kernel<<<grid_dim, block_dim>>>(mask_d, ci_dn, k, maskLength);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to launch combinationsAvailable_kernel");
+    
+    // prescan it to get offsets
+    cudaMemset(ci_dnx, 0, k * sizeof(unsigned int));
+    preScan(ci_dnx, ci_dn, k);
+    cudaMemcpy(ci_hnx, ci_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    
+    unsigned int *sparseM_h1;
+    unsigned int *sparseM_d1;
+    unsigned int sparse_matrix_size1 = ci_hnx[k-1];
+    cout<<"allocating sparse matrix for size"<<sparse_matrix_size1<<endl; 
+    sparseM_h1 = (unsigned int*) malloc(3 * sparse_matrix_size1 * sizeof (unsigned int));
+    cuda_ret = cudaMalloc((void**)&sparseM_d1, 3 * sparse_matrix_size1 * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cudaMemset(sparseM_d1, 0, 3 * sparse_matrix_size1 * sizeof(unsigned int));
+    block_dim.x = BLOCK_SIZE;
+    block_dim.y = 1;
+    block_dim.y = 1;
+    grid_dim.x = (int) ceil(k / (1.0 * block_dim.x));
+    grid_dim.y = 1;
+    grid_dim.z = 1;
+    cout<<" convert2Sparse kernel <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
+    startTime(&timer);
+    convert2Sparse<<<grid_dim, block_dim>>>(mask_d, ci_dnx, sparseM_d1, sparse_matrix_size1, k);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to launch convert2Sparse");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    
+    cudaMemcpy(sparseM_h1, sparseM_d1, 3 * sparse_matrix_size1 * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    
+    
+    // make the sparse array
+    vector<std::pair<tuple, int> > patterns1;
+    cout<<"build vector from sparse array of length = "<<sparse_matrix_size<<endl;
+    for (int i = 0; i< sparse_matrix_size1;i++) {
+        tuple t(sparseM_h1[i], sparseM_h1[i + sparse_matrix_size1]);
+        int item = sparseM_h1[i + 2 * sparse_matrix_size1];
+        patterns.push_back(std::pair<tuple, unsigned int>(t, item));    
+    }
+    cout<<"map size"<<patterns1.size()<<endl;
+#ifdef TEST_PARAMS
+    for (it = patterns1.begin(); it != patterns1.end();it++) {
+        it->first.print();
+        cout<<"="<<it->second<<endl;    
     }
 #endif
 exit:
@@ -507,6 +722,16 @@ exit:
     cudaFree(mask_d);
     cudaFree(ci_dn);
     cudaFree(ci_dnx);
+    ///////////////////////////////////
+    free(actual_patterns_items);
+    free(index_items_lookup);
+    free(new_new_patterns);
+    free(sparseM_h1);
+    free(sparseM_h);
+    cudaFree(sparseM_d1);
+    cudaFree(sparseM_d);
+    cudaFree(actual_patterns_items_d);
+    cudaFree(index_items_lookup_d);
     cout<<"program end";
 
 }

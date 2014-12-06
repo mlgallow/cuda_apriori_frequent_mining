@@ -1,4 +1,5 @@
 #define TEST_PARAMS
+#define INVALID 99999
 #ifdef TEST_PARAMS
 
 #define MAX_UNIQUE_ITEMS 32
