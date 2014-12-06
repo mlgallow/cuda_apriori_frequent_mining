@@ -507,14 +507,16 @@ int main(int argc, char* argv[])
             op.print();
             cout<<"id assigned="<<index_id<<endl;
             actual_patterns_items_size += op.size();
-            new_modulo_map.push_back(std::pair<tuple, int>(op, index_id++));
+            new_modulo_map.push_back(std::pair<tuple, int>(op, index_id));
+            index_id++;
         }
         if (!isTuplePresent(new_modulo_map, op1)) {
             cout<<"adding tuple to api_h=";
             op1.print();
             cout<<"id assigned="<<index_id<<endl;
             actual_patterns_items_size += op1.size();
-            new_modulo_map.push_back(std::pair<tuple, int>(op1, index_id++)); 
+            new_modulo_map.push_back(std::pair<tuple, int>(op1, index_id)); 
+            index_id++;
         }
     }
 
@@ -534,20 +536,23 @@ int main(int argc, char* argv[])
     int counter = 0;
     for (it_modulo_map = new_modulo_map.begin(); it_modulo_map != new_modulo_map.end();it_modulo_map++) {
         tuple t = it_modulo_map->first;
-        index_items_lookup[counter++] = it->second;
-        index_items_lookup[counter++] = start_offset; 
-        index_items_lookup[counter++] = t.size();
+        //cout<<"makeiid tuple:";
+        //t.print();
+        //cout<<"--- index_id="<<it_modulo_map->second<<" start="<<start_offset<<"length="<<t.size()<<endl;
+        index_items_lookup[counter] = it_modulo_map->second;
+        index_items_lookup[counter+1] = start_offset; 
+        index_items_lookup[counter+2] = t.size();
+        //cout<<"--- index_id_tuple=("<<index_items_lookup[counter]<<","<<index_items_lookup[counter+1]<<","<<index_items_lookup[counter+2]<<endl;
+        counter +=3;
         for (int i =0; i < t.size();i++) {
-            actual_patterns_items[start_offset++] = t.get(i);
+            actual_patterns_items[start_offset] = t.get(i);
+            cout<<"api_h["<<start_offset<<"]="<<actual_patterns_items[start_offset]<<endl;
+            start_offset++;
         }
     }
 #ifdef TEST_PARAMS
-    /*
-    for (int i = 0;i < index_items_lookup_size/3;i++) {
+    for (int i = 0;i < index_items_lookup_size;i+=3) {
         cout<<"iil_h["<<i<<"]="<<"("<<index_items_lookup[i]<<","<<index_items_lookup[i+1]<<","<<index_items_lookup[i+2]<<")"<<endl;
-    }*/
-    for (int i = 0;i < index_items_lookup_size;i++) {
-        cout<<"iil_h["<<i<<"]="<<index_items_lookup[i]<<endl;
     }
 #endif
 #if 0
