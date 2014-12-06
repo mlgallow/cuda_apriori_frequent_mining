@@ -380,11 +380,11 @@ int main(int argc, char* argv[])
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
 #ifdef TEST_PARAMS
-    /*cout<<"################mask_h after findFrequencyGPU_kernel and Prune#############"<<endl;
+    cout<<"################mask_h after findFrequencyGPU_kernel and Prune#############"<<endl;
     for (int i = 0;i < maskLength; i++) {
         cout<<"mask["<<i<<"]="<<mask_h[i]<<endl;   
         
-    }*/
+    }
 #endif
     //now we need to convert the mask array to a sparse matrix in parallel
     // this means we need to find number of non zero entries in each row of mask matrix
@@ -462,17 +462,17 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
 #ifdef TEST_PARAMS
-    /*cout<<"sparse op(row,col,val)"<<endl;
+    cout<<"sparse op(row,col,val)"<<endl;
     for (int i = 0; i < sparse_matrix_size; i++) {
         cout<<"sparse("<<sparseM_h[i]<<","<<sparseM_h[i + sparse_matrix_size]<<","<<sparseM_h[i + 2*sparse_matrix_size]<<")"<<endl;    
-    }*/
+    }
 #endif
     //now create a STL map and add the sparse matrix values to the map
     //map<map_pair, unsigned int> patterns;
     vector<std::pair<tuple, int> > patterns;
     cout<<"build vector from sparse array of length = "<<sparse_matrix_size<<endl;
     for (int i = 0; i< sparse_matrix_size;i++) {
-        tuple t(sparseM_h[i], sparseM_h[i + sparse_matrix_size]);
+        tuple t(li_h[sparseM_h[i]], li_h[sparseM_h[i + sparse_matrix_size]]);
         int item = sparseM_h[i + 2 * sparse_matrix_size];
         patterns.push_back(std::pair<tuple, unsigned int>(t, item));    
     }
@@ -587,14 +587,22 @@ int main(int argc, char* argv[])
         cout<<"nnp["<<i<<"]="<<new_new_patterns[i]<<endl;    
     }
 #endif
-#if 0
     //#########################################################//
     //############# start of second phase######################// 
     // calculate parameters again for second phase
     k = counter;
+    cout<<"#############new k="<<k<<endl;
     maskLength = pow(float(k), 2);
-    cout <<"maskLength ="<<maskLength<<endl;
-    cuda_ret = cudaMemset(mask_d, -1, maskLength * sizeof(int));
+    cout <<"############new maskLength ="<<maskLength<<endl;
+    int *mask1_h = (int*)malloc(maskLength * sizeof(int));
+    int* mask1_d;//mask matrix
+    cout<<"alloc mask1 matrix"<<endl;
+    startTime(&timer);
+    cuda_ret = cudaMalloc((void**)&mask1_d, maskLength * sizeof(int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    
+    cuda_ret = cudaMemset(mask1_d, -1, maskLength * sizeof(int));
     block_dim.x = BLOCK_SIZE;
     block_dim.y = 1;
     block_dim.y = 1;
@@ -603,23 +611,22 @@ int main(int argc, char* argv[])
     grid_dim.z = 1;
     cout<<"self join launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
-    selfJoinKernel<<<grid_dim, block_dim>>>(li_d, mask_d, k, power);
+    selfJoinKernel<<<grid_dim, block_dim>>>(new_new_patterns_d, mask1_d, k, power);
     cudaDeviceSynchronize();
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
     
     //TBD:remove. only for test
     cout<<"copy mask back to host"<<endl;
     startTime(&timer);
-    cudaMemcpy(mask_h, mask_d, maskLength * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(mask1_h, mask1_d, maskLength * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
 #ifdef TEST_PARAMS
-    cout<<"################mask_h after join#############"<<endl;
+    /*cout<<"################mask_h after join#############"<<endl;
     for (int i = 0;i < maskLength; i++) {
-        cout<<"mask["<<i<<"]="<<mask_h[i]<<endl;   
-        
-    }
+        cout<<"mask["<<i<<"]="<<mask1_h[i]<<endl;   
+    }*/
 #endif
     unsigned int *actual_patterns_items_d;
     unsigned int *index_items_lookup_d;
@@ -644,12 +651,25 @@ int main(int argc, char* argv[])
     findHigherPatternFrequencyGPU<<<grid_dim, block_dim>>>(d_input, d_offsets,
                                   num_transactions, 
                                   num_elements, new_new_patterns_d,
-                                  mask_d, k, actual_patterns_items_d,
+                                  mask1_d, k, actual_patterns_items_d,
                                   index_items_lookup_d, power,
                                   actual_patterns_items_size,
                                   index_items_lookup_size, maskLength);
     cudaDeviceSynchronize();
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    cout<<"copy mask back to host"<<endl;
+    startTime(&timer);
+    cudaMemcpy(mask1_h, mask1_d, maskLength * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+#ifdef TEST_PARAMS
+    cout<<"################mask_h after join#############"<<endl;
+    for (int i = 0;i < maskLength; i++) {
+        cout<<"mask["<<i<<"]="<<mask1_h[i]<<endl;   
+    }
+#endif
+#if 0
 
     // prune the matrix
     block_dim.x = BLOCK_SIZE;
@@ -768,6 +788,9 @@ exit:
     if (new_new_patterns) {
         free(new_new_patterns);
     }
+    if (mask1_h) {
+        free(mask1_h);
+    }
     cudaFree(d_offsets);
     cudaFree(d_input);
     cudaFree(ci_d);
@@ -777,6 +800,7 @@ exit:
     cudaFree(ci_dnx);
     cudaFree(sparseM_d);
     cudaFree(new_new_patterns_d);
+    cudaFree(mask1_d);
     cout<<"program end";
 
 }

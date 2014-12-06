@@ -2,7 +2,7 @@ import random
 f = open('topic-3.txt', 'w')
 #a = [x for x in range(1, 256)]
 a = []
-for x in range(1,32):
+for x in range(1,8):
     #a.append(random.randint(1,32))
     a.append(x)
 i = 0
