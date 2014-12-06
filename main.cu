@@ -555,7 +555,6 @@ int main(int argc, char* argv[])
         cout<<"iil_h["<<i<<"]="<<"("<<index_items_lookup[i]<<","<<index_items_lookup[i+1]<<","<<index_items_lookup[i+2]<<")"<<endl;
     }
 #endif
-#if 0
     // now create the new encoded array
     unsigned int *new_new_patterns;
     unsigned int *new_new_patterns_d;
@@ -573,6 +572,7 @@ int main(int argc, char* argv[])
         if (code1 == INVALID || code2 == INVALID) continue;
         
         int newcode = code1 * mul_factor + code2;
+        cout<<"add to nnp["<<counter<<"]="<<newcode<<endl;
         new_new_patterns[counter++] = newcode;
     }
    
@@ -581,7 +581,13 @@ int main(int argc, char* argv[])
     //send the array to device
     cuda_ret = cudaMalloc((void**)&new_new_patterns_d, new_new_patterns_size * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
-    cuda_ret = cudaMemcpy(new_new_patterns_d, new_new_patterns_d, new_new_patterns_size * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    cuda_ret = cudaMemcpy(new_new_patterns_d, new_new_patterns, new_new_patterns_size * sizeof(unsigned int), cudaMemcpyHostToDevice);
+#ifdef TEST_PARAMS
+    for (int i = 0;i < new_new_patterns_size;i++) {
+        cout<<"nnp["<<i<<"]="<<new_new_patterns[i]<<endl;    
+    }
+#endif
+#if 0
     //#########################################################//
     //############# start of second phase######################// 
     // calculate parameters again for second phase
@@ -724,7 +730,6 @@ int main(int argc, char* argv[])
 #endif
 exit:
     ///////////////////////////////////
-    free(new_new_patterns);
     free(sparseM_h1);
     cudaFree(sparseM_d1);
     cudaFree(actual_patterns_items_d);
@@ -760,6 +765,9 @@ exit:
     if (index_items_lookup) {
         free(index_items_lookup);
     }
+    if (new_new_patterns) {
+        free(new_new_patterns);
+    }
     cudaFree(d_offsets);
     cudaFree(d_input);
     cudaFree(ci_d);
@@ -768,6 +776,7 @@ exit:
     cudaFree(ci_dn);
     cudaFree(ci_dnx);
     cudaFree(sparseM_d);
+    cudaFree(new_new_patterns_d);
     cout<<"program end";
 
 }
