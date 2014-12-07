@@ -657,19 +657,6 @@ int main(int argc, char* argv[])
                                   index_items_lookup_size, maskLength);
     cudaDeviceSynchronize();
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
-    cout<<"copy mask back to host"<<endl;
-    startTime(&timer);
-    cudaMemcpy(mask1_h, mask1_d, maskLength * sizeof(int), cudaMemcpyDeviceToHost);
-    cuda_ret = cudaDeviceSynchronize();
-    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
-    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
-#ifdef TEST_PARAMS
-    cout<<"################mask_h after join#############"<<endl;
-    for (int i = 0;i < maskLength; i++) {
-        cout<<"mask["<<i<<"]="<<mask1_h[i]<<endl;   
-    }
-#endif
-#if 0
 
     // prune the matrix
     block_dim.x = BLOCK_SIZE;
@@ -680,11 +667,29 @@ int main(int argc, char* argv[])
     grid_dim.z = 1;
     cout<<"pruneMultipleGPU <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
-    pruneMultipleGPU_kernel<<<grid_dim, block_dim>>>(mask_d, k, MIN_SUPPORT);
+    pruneMultipleGPU_kernel<<<grid_dim, block_dim>>>(mask1_d, k, MIN_SUPPORT);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch pruneMultipleGPU");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
 
+#ifdef TEST_PARAMS
+    cout<<"copy mask back to host"<<endl;
+    startTime(&timer);
+    cudaMemcpy(mask1_h, mask1_d, maskLength * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    cout<<"################mask_h after join#############"<<endl;
+    for (int i = 0;i < maskLength; i++) {
+        cout<<"mask["<<i<<"]="<<mask1_h[i]<<endl;   
+    }
+#endif
+    unsigned int *ci1_dn;
+    unsigned int *ci1_hn;
+    ci1_hn = (unsigned int*) malloc(k * sizeof (unsigned int));
+    cuda_ret = cudaMalloc((void**)&ci1_dn, k * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cudaMemset(ci1_dn, 0, k * sizeof(unsigned int));
     //find combinations available
     block_dim.x = BLOCK_SIZE;
     block_dim.y = BLOCK_SIZE;
@@ -693,23 +698,40 @@ int main(int argc, char* argv[])
     grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
     grid_dim.z = 1;
 
-    cudaMemset(ci_dn, 0, k * sizeof(unsigned int));
     cout<<"combinationsAvailable_kernel <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
-    combinationsAvailable_kernel<<<grid_dim, block_dim>>>(mask_d, ci_dn, k, maskLength);
+    combinationsAvailable_kernel<<<grid_dim, block_dim>>>(mask1_d, ci1_dn, k, maskLength);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch combinationsAvailable_kernel");
-    
-    // prescan it to get offsets
-    cudaMemset(ci_dnx, 0, k * sizeof(unsigned int));
-    preScan(ci_dnx, ci_dn, k);
-    cudaMemcpy(ci_hnx, ci_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(ci1_hn, ci1_dn, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
-    
+#ifdef TEST_PARAMS
+    for (int i = 0; i < k; i++) {
+        cout<<"ci1_dn["<<i<<"]="<<ci1_hn[i]<<endl;    
+    }
+#endif
+    unsigned int *ci1_hnx;
+    unsigned int *ci1_dnx;
+    ci1_hnx = (unsigned int*) malloc(k * sizeof (unsigned int));
+    cuda_ret = cudaMalloc((void**)&ci1_dnx, k * sizeof(unsigned int));
+    if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    cudaMemset(ci1_dnx, 0, k * sizeof(unsigned int));
+    // prescan it to get offsets
+    cudaMemset(ci1_dnx, 0, k * sizeof(unsigned int));
+    preScan(ci1_dnx, ci1_dn, k);
+    cudaMemcpy(ci1_hnx, ci1_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
+    cuda_ret = cudaDeviceSynchronize();
+    if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");    
+#ifdef TEST_PARAMS
+    cout<<"scan op"<<endl;
+    for (int i = 0; i < k; i++) {
+        cout<<"ci_dnx["<<i<<"]="<<ci1_hnx[i]<<endl;    
+    }
+#endif
     unsigned int *sparseM_h1;
     unsigned int *sparseM_d1;
-    unsigned int sparse_matrix_size1 = ci_hnx[k-1];
+    unsigned int sparse_matrix_size1 = ci1_hnx[k-1];
     cout<<"allocating sparse matrix for size"<<sparse_matrix_size1<<endl; 
     sparseM_h1 = (unsigned int*) malloc(3 * sparse_matrix_size1 * sizeof (unsigned int));
     cuda_ret = cudaMalloc((void**)&sparseM_d1, 3 * sparse_matrix_size1 * sizeof(unsigned int));
@@ -723,7 +745,7 @@ int main(int argc, char* argv[])
     grid_dim.z = 1;
     cout<<" convert2Sparse kernel <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
-    convert2Sparse<<<grid_dim, block_dim>>>(mask_d, ci_dnx, sparseM_d1, sparse_matrix_size1, k);
+    convert2Sparse<<<grid_dim, block_dim>>>(mask1_d, ci1_dnx, sparseM_d1, sparse_matrix_size1, k);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch convert2Sparse");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
@@ -732,7 +754,13 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     
-    
+#ifdef TEST_PARAMS
+    cout<<"sparse op1(row,col,val)"<<endl;
+    for (int i = 0; i < sparse_matrix_size1; i++) {
+        cout<<"sparse("<<sparseM_h1[i]<<","<<sparseM_h1[i + sparse_matrix_size]<<","<<sparseM_h1[i + 2*sparse_matrix_size]<<")"<<endl;    
+    }
+#endif
+#if 0
     // make the sparse array
     vector<std::pair<tuple, int> > patterns1;
     cout<<"build vector from sparse array of length = "<<sparse_matrix_size<<endl;
@@ -750,10 +778,6 @@ int main(int argc, char* argv[])
 #endif
 exit:
     ///////////////////////////////////
-    free(sparseM_h1);
-    cudaFree(sparseM_d1);
-    cudaFree(actual_patterns_items_d);
-    cudaFree(index_items_lookup_d);
 #endif
     if (trans_offset) {
         free(trans_offset);
@@ -791,6 +815,15 @@ exit:
     if (mask1_h) {
         free(mask1_h);
     }
+    if (ci1_hn) {
+        free(ci1_hn);    
+    }
+    if (ci1_hnx) {
+        free(ci1_hnx);    
+    } 
+    if (sparseM_h1) {
+        free(sparseM_h1);
+    }
     cudaFree(d_offsets);
     cudaFree(d_input);
     cudaFree(ci_d);
@@ -801,6 +834,11 @@ exit:
     cudaFree(sparseM_d);
     cudaFree(new_new_patterns_d);
     cudaFree(mask1_d);
+    cudaFree(ci1_dn); 
+    cudaFree(ci1_dnx); 
+    cudaFree(sparseM_d1);
+    cudaFree(actual_patterns_items_d);
+    cudaFree(index_items_lookup_d);
     cout<<"program end";
 
 }
