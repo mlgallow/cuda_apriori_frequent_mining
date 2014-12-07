@@ -624,8 +624,11 @@ int main(int argc, char* argv[])
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
 #ifdef TEST_PARAMS
     /*cout<<"################mask_h after join#############"<<endl;
-    for (int i = 0;i < maskLength; i++) {
-        cout<<"mask["<<i<<"]="<<mask1_h[i]<<endl;   
+    for (int i = 0;i < k; i++) {
+        for (int j = 0;j < k;j++) {
+            cout<<mask1_h[i*k + j]<<" ";
+        }
+        cout<<endl;
     }*/
 #endif
     unsigned int *actual_patterns_items_d;
@@ -680,8 +683,11 @@ int main(int argc, char* argv[])
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
     cout<<"################mask_h after join#############"<<endl;
-    for (int i = 0;i < maskLength; i++) {
-        cout<<"mask["<<i<<"]="<<mask1_h[i]<<endl;   
+    for (int i = 0;i < k; i++) {
+        for (int j = 0;j < k;j++) {
+            cout<<mask1_h[i*k + j]<<"   ";
+        }
+        cout<<endl;
     }
 #endif
     unsigned int *ci1_dn;
@@ -757,28 +763,24 @@ int main(int argc, char* argv[])
 #ifdef TEST_PARAMS
     cout<<"sparse op1(row,col,val)"<<endl;
     for (int i = 0; i < sparse_matrix_size1; i++) {
-        cout<<"sparse("<<sparseM_h1[i]<<","<<sparseM_h1[i + sparse_matrix_size]<<","<<sparseM_h1[i + 2*sparse_matrix_size]<<")"<<endl;    
+        cout<<"sparse("<<sparseM_h1[i]<<","<<sparseM_h1[i + sparse_matrix_size1]<<","<<sparseM_h1[i + 2*sparse_matrix_size1]<<")"<<endl;    
     }
 #endif
-#if 0
-    // make the sparse array
     vector<std::pair<tuple, int> > patterns1;
-    cout<<"build vector from sparse array of length = "<<sparse_matrix_size<<endl;
+    cout<<"build vector from sparse array of length = "<<sparse_matrix_size1<<endl;
     for (int i = 0; i< sparse_matrix_size1;i++) {
-        tuple t(sparseM_h1[i], sparseM_h1[i + sparse_matrix_size1]);
+        tuple t(new_new_patterns[sparseM_h1[i]], new_new_patterns[sparseM_h1[i + sparse_matrix_size1]]);
         int item = sparseM_h1[i + 2 * sparse_matrix_size1];
-        patterns.push_back(std::pair<tuple, unsigned int>(t, item));    
+        patterns1.push_back(std::pair<tuple, unsigned int>(t, item));    
     }
     cout<<"map size"<<patterns1.size()<<endl;
 #ifdef TEST_PARAMS
     for (it = patterns1.begin(); it != patterns1.end();it++) {
         it->first.print();
-        cout<<"="<<it->second<<endl;    
+        cout<<"="<<it->second<<endl;
     }
 #endif
 exit:
-    ///////////////////////////////////
-#endif
     if (trans_offset) {
         free(trans_offset);
     }
