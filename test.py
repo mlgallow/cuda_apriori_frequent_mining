@@ -2,7 +2,7 @@ import random
 f = open('topic-3.txt', 'w')
 #a = [x for x in range(1, 256)]
 a = []
-for x in range(1,8):
+for x in range(1,64):
     #a.append(random.randint(1,32))
     a.append(x)
 i = 0
@@ -12,7 +12,7 @@ for item in a:
     s += ' '
 
 s+= '\n' 
-while i < 10000:
+while i < 1000000:
     f.write(s)
     i +=1
 

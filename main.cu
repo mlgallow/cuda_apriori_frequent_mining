@@ -15,21 +15,6 @@
 #include<algorithm>
 using namespace std;
 
-class map_pair{
-    public:
-    unsigned int row_item;
-    unsigned int col_item;
-    map_pair(unsigned int row, unsigned int col) {
-        this->row_item = row;
-        this->col_item = col;    
-    }
-    bool operator < (const map_pair& another) const {
-        if (this->row_item == another.row_item) return this->col_item < another.col_item;
-        else return this->row_item < another.row_item;
-    }
-    ~map_pair() {}
-};
-
 class tuple {
     // ensure it doesnt exceed MAX_PATTERN
     public:
@@ -264,7 +249,7 @@ int main(int argc, char* argv[])
     cout<<"histogram output after pruning:"<<endl;
     for (int i = 0; i < MAX_UNIQUE_ITEMS; i++) {
         cout<<"ci_h["<<i<<"]="<<ci_h[i]<<endl;   
-    }    
+    }   
 #endif
     unsigned int *li_h; // this list contains the actual items which passed min support test
     unsigned int  k = 0; //count of actual items which passed min support test
@@ -275,10 +260,6 @@ int main(int argc, char* argv[])
     }
     cout<<"num items with good support count="<<k<<endl;
     li_h = (unsigned int *) malloc(k * sizeof(unsigned int));
-    /*if (li_h ==  NULL) {
-        cout<<"faild to alloc li_h...exiting!"<<endl;
-        goto exit;    
-    }*/
     int li_count = 0;
     for (int i = 0;i<MAX_UNIQUE_ITEMS;i++) {
         if (ci_h[i] != 0) {
@@ -414,11 +395,11 @@ int main(int argc, char* argv[])
     cudaMemcpy(ci_hn, ci_dn, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
-//#ifdef TEST_PARAMS
+#ifdef TEST_PARAMS
     for (int i = 0; i < k; i++) {
         cout<<"ci_dn["<<i<<"]="<<ci_hn[i]<<endl;    
     }
-//#endif
+#endif
     // prescan the ci_hn array
     unsigned int *ci_hnx;
     unsigned int *ci_dnx;
@@ -430,12 +411,12 @@ int main(int argc, char* argv[])
     cudaMemcpy(ci_hnx, ci_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
-//#ifdef TEST_PARAMS
+#ifdef TEST_PARAMS
     cout<<"scan op"<<endl;
     for (int i = 0; i < k; i++) {
         cout<<"ci_dnx["<<i<<"]="<<ci_hnx[i]<<endl;    
     }
-//#endif
+#endif
 
     unsigned int *sparseM_h;
     unsigned int *sparseM_d;
@@ -491,29 +472,37 @@ int main(int argc, char* argv[])
     int actual_patterns_items_size = 0;
     for (it_modulo_map = patterns.begin();it_modulo_map != patterns.end();it_modulo_map++) {
         tuple t = it_modulo_map->first;
+#ifdef TEST_PARAMS
         cout<<"tuple:";
         t.print();
         cout<<"----";
+#endif
         //since now there is only 2 items in the tuple.
         tuple op = t.getFirstNitems(1);
         tuple op1 = t.getLastItem();
+#ifdef TEST_PARAMS
         cout<<"split tuple=";
         op.print();
         cout<< "---";
         op1.print();
         cout<<endl;
+#endif
         if (!isTuplePresent(new_modulo_map, op)) {
+#ifdef TEST_PARAMS
             cout<<"adding tuple to api_h=";
             op.print();
             cout<<"id assigned="<<index_id<<endl;
+#endif
             actual_patterns_items_size += op.size();
             new_modulo_map.push_back(std::pair<tuple, int>(op, index_id));
             index_id++;
         }
         if (!isTuplePresent(new_modulo_map, op1)) {
+#ifdef TEST_PARAMS
             cout<<"adding tuple to api_h=";
             op1.print();
             cout<<"id assigned="<<index_id<<endl;
+#endif
             actual_patterns_items_size += op1.size();
             new_modulo_map.push_back(std::pair<tuple, int>(op1, index_id)); 
             index_id++;
@@ -546,7 +535,7 @@ int main(int argc, char* argv[])
         counter +=3;
         for (int i =0; i < t.size();i++) {
             actual_patterns_items[start_offset] = t.get(i);
-            cout<<"api_h["<<start_offset<<"]="<<actual_patterns_items[start_offset]<<endl;
+            //cout<<"api_h["<<start_offset<<"]="<<actual_patterns_items[start_offset]<<endl;
             start_offset++;
         }
     }
@@ -572,7 +561,7 @@ int main(int argc, char* argv[])
         if (code1 == INVALID || code2 == INVALID) continue;
         
         int newcode = code1 * mul_factor + code2;
-        cout<<"add to nnp["<<counter<<"]="<<newcode<<endl;
+        //cout<<"add to nnp["<<counter<<"]="<<newcode<<endl;
         new_new_patterns[counter++] = newcode;
     }
    
