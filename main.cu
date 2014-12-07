@@ -119,6 +119,8 @@ int compare(const void *a, const void *b) {
 bool pair_compare(const pair<short unsigned int, unsigned int>& p1,const pair<short unsigned int, unsigned int>& p2);
 int main(int argc, char* argv[])
 {
+    float totalRunTime = 0.0;
+    float totalAllocTime = 0.0;
     char *line = NULL;
     size_t len = 0;
     unsigned int lines = 0;
@@ -207,7 +209,6 @@ int main(int argc, char* argv[])
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cuda_ret = cudaMalloc((void**)&d_offsets, (num_transactions + 1) * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
-    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
     cuda_ret = cudaMalloc((void**)&ci_d, MAX_UNIQUE_ITEMS * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cuda_ret = cudaMemset(ci_d, 0, MAX_UNIQUE_ITEMS * sizeof(unsigned int));
@@ -215,29 +216,39 @@ int main(int argc, char* argv[])
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
     cuda_ret = cudaMemcpy(d_offsets, trans_offset, (num_transactions+1) * sizeof(unsigned int), cudaMemcpyHostToDevice);
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
+    
     
     dim3 grid_dim, block_dim;
     block_dim.x = BLOCK_SIZE; 
     block_dim.y = 1; block_dim.z = 1;
     grid_dim.x = ceil(num_elements / (1.0 * BLOCK_SIZE)); 
     grid_dim.y = 1; grid_dim.z = 1;
+    //################################################################################//
+    //###########################histogram_kernel####################################//
     cout<<"launching histogram kernel(grid, block):"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     histogram_kernel<<<grid_dim, block_dim, MAX_UNIQUE_ITEMS * sizeof(unsigned int)>>>(d_input, ci_d, num_elements);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch Histogram kernel");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     // prune the histogram op 
     block_dim.x = BLOCK_SIZE; 
     block_dim.y = 1; block_dim.z = 1;
     grid_dim.x = ceil(MAX_UNIQUE_ITEMS / (1.0 * BLOCK_SIZE)); 
     grid_dim.y = 1; grid_dim.z = 1;
+    //################################################################################//
+    //###########################pruneGPU_kernel####################################//
     cout<<"launching pruning kernel(grid, block):"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     pruneGPU_kernel<<<grid_dim, block_dim>>>(ci_d, MAX_UNIQUE_ITEMS, MIN_SUPPORT);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
+    
     
     cout<<"copying hist op back to host"<<endl;
     startTime(&timer);
@@ -245,12 +256,14 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 #ifdef TEST_PARAMS
     cout<<"histogram output after pruning:"<<endl;
     for (int i = 0; i < MAX_UNIQUE_ITEMS; i++) {
         cout<<"ci_h["<<i<<"]="<<ci_h[i]<<endl;   
     }   
 #endif
+    startTime(&timer);
     unsigned int *li_h; // this list contains the actual items which passed min support test
     unsigned int  k = 0; //count of actual items which passed min support test
     for (int i = 0;i<MAX_UNIQUE_ITEMS;i++) {
@@ -258,14 +271,25 @@ int main(int argc, char* argv[])
             k++;    
         }    
     }
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
+    
     cout<<"num items with good support count="<<k<<endl;
+    startTime(&timer);
     li_h = (unsigned int *) malloc(k * sizeof(unsigned int));
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
+    
+    
+    startTime(&timer);
     int li_count = 0;
     for (int i = 0;i<MAX_UNIQUE_ITEMS;i++) {
         if (ci_h[i] != 0) {
             li_h[li_count++] = i; 
         } 
     }
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 
 #ifdef TEST_PARAMS
     cout<<"li_h after pruning:"<<endl;
@@ -274,11 +298,14 @@ int main(int argc, char* argv[])
     }
 #endif
     unsigned int *li_d;
+    startTime(&timer);
     cuda_ret = cudaMalloc((void**)&li_d, k * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cudaMemcpy(li_d, li_h, k * sizeof(unsigned int), cudaMemcpyHostToDevice);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy li_h to device");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
     
     int maskLength = pow(float(k), 2);
     cout <<"maskLength ="<<maskLength<<endl;
@@ -289,6 +316,7 @@ int main(int argc, char* argv[])
     cuda_ret = cudaMalloc((void**)&mask_d, maskLength * sizeof(int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
     
     block_dim.x = BLOCK_SIZE;
     block_dim.y = 1;
@@ -307,11 +335,14 @@ int main(int argc, char* argv[])
     grid_dim.x = (int) ceil(k / (1.0 * MAX_ITEM_PER_SM));
     grid_dim.y = 1;
     grid_dim.z = 1;
+    //################################################################################/
+    //###########################selfJoinKernel#######################################/
     cout<<"self join launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     selfJoinKernel<<<grid_dim, block_dim>>>(li_d, mask_d, k, power);
     cudaDeviceSynchronize();
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
   
     // TBD:to test. remove in final code
     cout<<"copy mask back to host"<<endl;
@@ -320,6 +351,7 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 #ifdef TEST_PARAMS
     /*cout<<"################mask_h after join#############"<<endl;
     for (int i = 0;i < maskLength; i++) {
@@ -333,12 +365,15 @@ int main(int argc, char* argv[])
     grid_dim.x = (int) ceil((num_transactions) / (1.0 * MAX_TRANSACTION_PER_SM));
     grid_dim.y = 1;
     grid_dim.z = 1;
+    //################################################################################/
+    //###########################findFrequencyGPU#######################################/
     cout<<"findFrequencyGPU <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     findFrequencyGPU_kernel<<<grid_dim, block_dim>>>(d_input, d_offsets, num_transactions, num_elements, li_d, mask_d, k, maskLength);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch findFrequencyGPU_kernel");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     //prune the 2d mask matrix
     block_dim.x = BLOCK_SIZE;
     block_dim.y = BLOCK_SIZE;
@@ -346,13 +381,15 @@ int main(int argc, char* argv[])
     grid_dim.x = (int) ceil(k / (1.0 * block_dim.x));
     grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
     grid_dim.z = 1;
-    //cout<<"gridy"<<grid_dim.y<<endl;
+    //################################################################################/
+    //###########################pruneMultipleGPU_kernel##############################
     cout<<"pruneMultipleGPU <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     pruneMultipleGPU_kernel<<<grid_dim, block_dim>>>(mask_d, k, MIN_SUPPORT);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch pruneMultipleGPU");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 
     cout<<"copy mask back to host"<<endl;
     startTime(&timer);
@@ -386,12 +423,18 @@ int main(int argc, char* argv[])
     grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
     grid_dim.z = 1;
 
+    //################################################################################/
+    //###########################combinationsAvailable_kernel##############################
     cout<<"combinationsAvailable_kernel <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     combinationsAvailable_kernel<<<grid_dim, block_dim>>>(mask_d, ci_dn, k, maskLength);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch combinationsAvailable_kernel");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
+    
+    cout<<"Copy ci_dn to host"<<endl;
+    startTime(&timer);
     cudaMemcpy(ci_hn, ci_dn, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
@@ -400,14 +443,28 @@ int main(int argc, char* argv[])
         cout<<"ci_dn["<<i<<"]="<<ci_hn[i]<<endl;    
     }
 #endif
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     // prescan the ci_hn array
     unsigned int *ci_hnx;
     unsigned int *ci_dnx;
+    startTime(&timer);
     ci_hnx = (unsigned int*) malloc(k * sizeof (unsigned int));
     cuda_ret = cudaMalloc((void**)&ci_dnx, k * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cudaMemset(ci_dnx, 0, k * sizeof(unsigned int));
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
+    
+    //###############################################################
+    //###########################preScan##############################
+    cout<<"prescan time"<<endl; 
+    startTime(&timer);
     preScan(ci_dnx, ci_dn, k);
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
+    
+    
     cudaMemcpy(ci_hnx, ci_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
@@ -438,10 +495,14 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch convert2Sparse");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     
+    startTime(&timer);
     cudaMemcpy(sparseM_h, sparseM_d, 3 * sparse_matrix_size * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 #ifdef TEST_PARAMS
     cout<<"sparse op(row,col,val)"<<endl;
     for (int i = 0; i < sparse_matrix_size; i++) {
@@ -449,15 +510,16 @@ int main(int argc, char* argv[])
     }
 #endif
     //now create a STL map and add the sparse matrix values to the map
-    //map<map_pair, unsigned int> patterns;
+    cout<<"Making vector modulo map"<<endl;
+    startTime(&timer);
     vector<std::pair<tuple, int> > patterns;
-    cout<<"build vector from sparse array of length = "<<sparse_matrix_size<<endl;
+    //cout<<"build vector from sparse array of length = "<<sparse_matrix_size<<endl;
     for (int i = 0; i< sparse_matrix_size;i++) {
         tuple t(li_h[sparseM_h[i]], li_h[sparseM_h[i + sparse_matrix_size]]);
         int item = sparseM_h[i + 2 * sparse_matrix_size];
         patterns.push_back(std::pair<tuple, unsigned int>(t, item));    
     }
-    cout<<"map size"<<patterns.size()<<endl;
+    //cout<<"map size"<<patterns.size()<<endl;
 #ifdef TEST_PARAMS
     vector<std::pair<tuple, int> >::iterator it;
     for (it = patterns.begin(); it != patterns.end();it++) {
@@ -516,9 +578,9 @@ int main(int argc, char* argv[])
         cout<<"]="<<it_modulo_map->second<<endl; 
     }
 #endif
-    cout<<"actual_patterns_items_size:"<<actual_patterns_items_size<<endl;
+    //cout<<"actual_patterns_items_size:"<<actual_patterns_items_size<<endl;
     int index_items_lookup_size = 3 * new_modulo_map.size();// (index_id, start, length)
-    cout<<"index_items_lookup_size :"<<index_items_lookup_size<<endl;
+    //cout<<"index_items_lookup_size :"<<index_items_lookup_size<<endl;
     unsigned int *actual_patterns_items = (unsigned int *) malloc(actual_patterns_items_size * sizeof (unsigned int));
     unsigned int *index_items_lookup = (unsigned int *) malloc(index_items_lookup_size * sizeof (unsigned int));
     int start_offset = 0;
@@ -567,10 +629,20 @@ int main(int argc, char* argv[])
    
     //may apply radix sort to sort it
     qsort(new_new_patterns, sizeof(new_new_patterns)/sizeof(new_new_patterns[0]), sizeof(new_new_patterns[0]), compare);
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     //send the array to device
+    startTime(&timer);
     cuda_ret = cudaMalloc((void**)&new_new_patterns_d, new_new_patterns_size * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
+    
+    
+    startTime(&timer);
     cuda_ret = cudaMemcpy(new_new_patterns_d, new_new_patterns, new_new_patterns_size * sizeof(unsigned int), cudaMemcpyHostToDevice);
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 #ifdef TEST_PARAMS
     for (int i = 0;i < new_new_patterns_size;i++) {
         cout<<"nnp["<<i<<"]="<<new_new_patterns[i]<<endl;    
@@ -590,6 +662,7 @@ int main(int argc, char* argv[])
     cuda_ret = cudaMalloc((void**)&mask1_d, maskLength * sizeof(int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
     
     cuda_ret = cudaMemset(mask1_d, -1, maskLength * sizeof(int));
     block_dim.x = BLOCK_SIZE;
@@ -598,11 +671,14 @@ int main(int argc, char* argv[])
     grid_dim.x = (int) ceil(k / (1.0 * MAX_ITEM_PER_SM));
     grid_dim.y = 1;
     grid_dim.z = 1;
+    //#########################################################//
+    //#############selfJoinKernel##############################// 
     cout<<"self join launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     selfJoinKernel<<<grid_dim, block_dim>>>(new_new_patterns_d, mask1_d, k, power);
     cudaDeviceSynchronize();
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     
     //TBD:remove. only for test
     cout<<"copy mask back to host"<<endl;
@@ -611,6 +687,7 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 #ifdef TEST_PARAMS
     /*cout<<"################mask_h after join#############"<<endl;
     for (int i = 0;i < k; i++) {
@@ -622,15 +699,21 @@ int main(int argc, char* argv[])
 #endif
     unsigned int *actual_patterns_items_d;
     unsigned int *index_items_lookup_d;
+    startTime(&timer);
     cuda_ret = cudaMalloc((void**)&actual_patterns_items_d, actual_patterns_items_size * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cuda_ret = cudaMalloc((void**)&index_items_lookup_d, index_items_lookup_size * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
 
+    startTime(&timer);
     cuda_ret = cudaMemcpy(actual_patterns_items_d, actual_patterns_items, actual_patterns_items_size * sizeof(unsigned int), cudaMemcpyHostToDevice);
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
     cuda_ret = cudaMemcpy(index_items_lookup_d, index_items_lookup, index_items_lookup_size * sizeof(unsigned int), cudaMemcpyHostToDevice);
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy input to the device");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 
     block_dim.x = BLOCK_SIZE;
     block_dim.y = 1;
@@ -638,6 +721,8 @@ int main(int argc, char* argv[])
     grid_dim.x = (int) ceil((num_transactions) / (1.0 * MAX_TRANSACTION_PER_SM));
     grid_dim.y = 1;
     grid_dim.z = 1;
+    //##############################################################################
+    //"################findHigherPatternFrequencyGPU###############################
     cout<<"findHigherPatternFrequencyGPU launched with <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     findHigherPatternFrequencyGPU<<<grid_dim, block_dim>>>(d_input, d_offsets,
@@ -649,6 +734,7 @@ int main(int argc, char* argv[])
                                   index_items_lookup_size, maskLength);
     cudaDeviceSynchronize();
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 
     // prune the matrix
     block_dim.x = BLOCK_SIZE;
@@ -657,12 +743,15 @@ int main(int argc, char* argv[])
     grid_dim.x = (int) ceil(k / (1.0 * block_dim.x));
     grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
     grid_dim.z = 1;
+    //######################################################################
+    //"################pruneMultipleGPU_kernel##############################
     cout<<"pruneMultipleGPU <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     pruneMultipleGPU_kernel<<<grid_dim, block_dim>>>(mask1_d, k, MIN_SUPPORT);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch pruneMultipleGPU");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 
 #ifdef TEST_PARAMS
     cout<<"copy mask back to host"<<endl;
@@ -693,14 +782,23 @@ int main(int argc, char* argv[])
     grid_dim.y = (int) ceil(k / (1.0 * block_dim.y));
     grid_dim.z = 1;
 
+    //######################################################################
+    //"################CombinationsAvailable_kernel##############################
     cout<<"combinationsAvailable_kernel <grid,block>"<<grid_dim.x<<","<<block_dim.x<<endl;
     startTime(&timer);
     combinationsAvailable_kernel<<<grid_dim, block_dim>>>(mask1_d, ci1_dn, k, maskLength);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch combinationsAvailable_kernel");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
+    
+    
+    startTime(&timer);
     cudaMemcpy(ci1_hn, ci1_dn, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
 #ifdef TEST_PARAMS
     for (int i = 0; i < k; i++) {
         cout<<"ci1_dn["<<i<<"]="<<ci1_hn[i]<<endl;    
@@ -708,13 +806,20 @@ int main(int argc, char* argv[])
 #endif
     unsigned int *ci1_hnx;
     unsigned int *ci1_dnx;
+    startTime(&timer);
     ci1_hnx = (unsigned int*) malloc(k * sizeof (unsigned int));
     cuda_ret = cudaMalloc((void**)&ci1_dnx, k * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cudaMemset(ci1_dnx, 0, k * sizeof(unsigned int));
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
+    
+    
     // prescan it to get offsets
-    cudaMemset(ci1_dnx, 0, k * sizeof(unsigned int));
+    startTime(&timer);
     preScan(ci1_dnx, ci1_dn, k);
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     cudaMemcpy(ci1_hnx, ci1_dnx, k * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");    
@@ -728,10 +833,15 @@ int main(int argc, char* argv[])
     unsigned int *sparseM_d1;
     unsigned int sparse_matrix_size1 = ci1_hnx[k-1];
     cout<<"allocating sparse matrix for size"<<sparse_matrix_size1<<endl; 
+    startTime(&timer);
     sparseM_h1 = (unsigned int*) malloc(3 * sparse_matrix_size1 * sizeof (unsigned int));
     cuda_ret = cudaMalloc((void**)&sparseM_d1, 3 * sparse_matrix_size1 * sizeof(unsigned int));
     if(cuda_ret != cudaSuccess) FATAL("Unable to allocate device memory");
     cudaMemset(sparseM_d1, 0, 3 * sparse_matrix_size1 * sizeof(unsigned int));
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalAllocTime += elapsedTime(timer);
+     
+    
     block_dim.x = BLOCK_SIZE;
     block_dim.y = 1;
     block_dim.y = 1;
@@ -744,10 +854,14 @@ int main(int argc, char* argv[])
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to launch convert2Sparse");
     stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     
+    startTime(&timer);
     cudaMemcpy(sparseM_h1, sparseM_d1, 3 * sparse_matrix_size1 * sizeof(int), cudaMemcpyDeviceToHost);
     cuda_ret = cudaDeviceSynchronize();
     if(cuda_ret != cudaSuccess) FATAL("Unable to copy histogram op back to host");
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     
 #ifdef TEST_PARAMS
     cout<<"sparse op1(row,col,val)"<<endl;
@@ -755,13 +869,16 @@ int main(int argc, char* argv[])
         cout<<"sparse("<<sparseM_h1[i]<<","<<sparseM_h1[i + sparse_matrix_size1]<<","<<sparseM_h1[i + 2*sparse_matrix_size1]<<")"<<endl;    
     }
 #endif
+    cout<<"Making vector maps2"<<endl;
+    startTime(&timer);
     vector<std::pair<tuple, int> > patterns1;
-    cout<<"build vector from sparse array of length = "<<sparse_matrix_size1<<endl;
     for (int i = 0; i< sparse_matrix_size1;i++) {
         tuple t(new_new_patterns[sparseM_h1[i]], new_new_patterns[sparseM_h1[i + sparse_matrix_size1]]);
         int item = sparseM_h1[i + 2 * sparse_matrix_size1];
         patterns1.push_back(std::pair<tuple, unsigned int>(t, item));    
     }
+    stopTime(&timer); cout<<elapsedTime(timer)<<endl;
+    totalRunTime += elapsedTime(timer);
     cout<<"map size"<<patterns1.size()<<endl;
 #ifdef TEST_PARAMS
     for (it = patterns1.begin(); it != patterns1.end();it++) {
@@ -769,6 +886,8 @@ int main(int argc, char* argv[])
         cout<<"="<<it->second<<endl;
     }
 #endif
+    cout<<"TotalRunTime="<<totalRunTime<<endl;
+    cout<<"TotalAllocTime="<<totalAllocTime<<endl;
 exit:
     if (trans_offset) {
         free(trans_offset);
